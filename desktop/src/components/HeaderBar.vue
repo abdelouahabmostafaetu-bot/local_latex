@@ -7,8 +7,8 @@ import Logo from "./Logo.vue";
 import RecompileButton from "./RecompileButton.vue";
 import ToolbarButton from "./ToolbarButton.vue";
 
-defineProps<{ atlasOpen: boolean }>();
-const emit = defineEmits<{ toggleAtlas: [] }>();
+defineProps<{ atlasOpen: boolean; copilotOpen: boolean }>();
+const emit = defineEmits<{ toggleAtlas: []; toggleCopilot: [] }>();
 
 const editing = ref(false);
 const draft = ref("");
@@ -117,6 +117,10 @@ function toggleLogs() {
     />
     <ToolbarButton icon="toc" label="Outline" :active="state.ui.showOutline" @click="state.ui.showOutline = !state.ui.showOutline" />
 
+    <button class="atlas-launcher ml-2 flex h-9 items-center gap-2 rounded-md px-3 text-[12px] font-semibold"
+      :class="{ 'is-active': copilotOpen }" :aria-pressed="copilotOpen" title="Open Copilot chat" @click="emit('toggleCopilot')">
+      <Icon name="forum" :size="17" /><span>Copilot</span>
+    </button>
     <button
       class="atlas-launcher ml-2 flex h-9 items-center gap-2 rounded-md px-3 text-[12px] font-semibold"
       :class="{ 'is-active': atlasOpen }"

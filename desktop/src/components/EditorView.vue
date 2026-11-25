@@ -13,6 +13,7 @@ import PdfPane from "./PdfPane.vue";
 import ResizeHandle from "./ResizeHandle.vue";
 import Sidebar from "./Sidebar.vue";
 import ReferenceAtlas from "./ReferenceAtlas.vue";
+import CopilotSidebar from "./CopilotSidebar.vue";
 
 // Panel sizes, remembered across sessions.
 function stored(key: string, fallback: number) {
@@ -22,6 +23,7 @@ function stored(key: string, fallback: number) {
 const sidebarWidth = ref(stored("sidebarWidth", 240));
 const pdfRatio = ref(stored("pdfRatio", 0.5));
 const atlasOpen = ref(false);
+const copilotOpen = ref(false);
 const atlasIndex = shallowRef(indexProjectSymbols({}));
 let atlasTimer: ReturnType<typeof setTimeout> | undefined;
 // Debounce project-wide analysis and always prefer the live editor over the disk index.
@@ -102,7 +104,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex h-full flex-col">
-    <HeaderBar :atlas-open="atlasOpen" @toggle-atlas="atlasOpen = !atlasOpen" />
+    <HeaderBar :atlas-open="atlasOpen" :copilot-open="copilotOpen" @toggle-atlas="atlasOpen = !atlasOpen; if (atlasOpen) copilotOpen = false" @toggle-copilot="copilotOpen = !copilotOpen; if (copilotOpen) atlasOpen = false" />
 
     <div class="relative flex min-h-0 flex-1">
       <!-- B. Sidebar -->
@@ -159,6 +161,7 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
+      <CopilotSidebar v-show="copilotOpen" @close="copilotOpen = false" />
       <ReferenceAtlas v-if="atlasOpen" :index="atlasIndex" @close="atlasOpen = false" />
 
       <div
