@@ -7,8 +7,8 @@ import Logo from "./Logo.vue";
 import RecompileButton from "./RecompileButton.vue";
 import ToolbarButton from "./ToolbarButton.vue";
 
-defineProps<{ aiOpen: boolean }>();
-const emit = defineEmits<{ toggleAi: [] }>();
+defineProps<{ atlasOpen: boolean }>();
+const emit = defineEmits<{ toggleAtlas: [] }>();
 
 const editing = ref(false);
 const draft = ref("");
@@ -117,16 +117,23 @@ function toggleLogs() {
     />
     <ToolbarButton icon="toc" label="Outline" :active="state.ui.showOutline" @click="state.ui.showOutline = !state.ui.showOutline" />
 
-    <span class="ml-2 rounded-full bg-gradient-to-r from-violet-600 to-cyan-500 px-2.5 py-1 text-[11px] font-bold text-white">AI Edition</span>
     <button
-      class="flex h-8 items-center justify-center rounded px-2.5 text-[12px] font-semibold hover:bg-header-hover"
-      :class="aiOpen ? 'bg-accent text-white hover:bg-accent-hover' : ''"
-      :aria-pressed="aiOpen"
-      title="Toggle AI Assistant"
-      @click="emit('toggleAi')"
+      class="atlas-launcher ml-2 flex h-9 items-center gap-2 rounded-md px-3 text-[12px] font-semibold"
+      :class="{ 'is-active': atlasOpen }"
+      :aria-pressed="atlasOpen"
+      title="Reference Atlas (Ctrl/⌘ + Alt + R)"
+      @click="emit('toggleAtlas')"
     >
-      AI
+      <Icon name="hub" :size="17" /> <span>Reference Atlas</span>
     </button>
 
   </header>
 </template>
+
+<style scoped>
+.atlas-launcher { color: #176641; background: #e8f4ed; border: 1px solid #bedbc9; transition: background .16s ease, color .16s ease; }
+.atlas-launcher:hover, .atlas-launcher.is-active { background: #155b3b; color: #fff; border-color: #155b3b; }
+.atlas-launcher:focus-visible { outline: 2px solid #459b6c; outline-offset: 2px; }
+:global(.dark) .atlas-launcher { color: #b7ead0; background: #203c30; border-color: #39624a; }
+:global(.dark) .atlas-launcher:hover, :global(.dark) .atlas-launcher.is-active { background: #287c52; color: white; }
+</style>
