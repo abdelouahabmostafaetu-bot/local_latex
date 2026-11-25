@@ -7,6 +7,9 @@ import Logo from "./Logo.vue";
 import RecompileButton from "./RecompileButton.vue";
 import ToolbarButton from "./ToolbarButton.vue";
 
+defineProps<{ aiOpen: boolean }>();
+const emit = defineEmits<{ toggleAi: [] }>();
+
 const editing = ref(false);
 const draft = ref("");
 const titleInput = ref<HTMLInputElement>();
@@ -113,6 +116,17 @@ function toggleLogs() {
       @click="toggleLogs"
     />
     <ToolbarButton icon="toc" label="Outline" :active="state.ui.showOutline" @click="state.ui.showOutline = !state.ui.showOutline" />
+
+    <span class="ml-2 rounded-full bg-gradient-to-r from-violet-600 to-cyan-500 px-2.5 py-1 text-[11px] font-bold text-white">AI Edition</span>
+    <button
+      class="flex h-8 items-center justify-center rounded px-2.5 text-[12px] font-semibold hover:bg-header-hover"
+      :class="aiOpen ? 'bg-accent text-white hover:bg-accent-hover' : ''"
+      :aria-pressed="aiOpen"
+      title="Toggle AI Assistant"
+      @click="emit('toggleAi')"
+    >
+      AI
+    </button>
 
   </header>
 </template>

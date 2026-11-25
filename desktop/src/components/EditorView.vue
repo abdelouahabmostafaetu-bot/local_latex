@@ -19,6 +19,7 @@ function stored(key: string, fallback: number) {
 }
 const sidebarWidth = ref(stored("sidebarWidth", 240));
 const pdfRatio = ref(stored("pdfRatio", 0.5));
+const aiOpen = ref(false);
 const splitArea = ref<HTMLDivElement>();
 
 watch([sidebarWidth, pdfRatio], () => {
@@ -79,7 +80,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex h-full flex-col">
-    <HeaderBar />
+    <HeaderBar :ai-open="aiOpen" @toggle-ai="aiOpen = !aiOpen" />
 
     <div class="relative flex min-h-0 flex-1">
       <!-- B. Sidebar -->
@@ -135,6 +136,11 @@ onBeforeUnmount(() => {
           <PdfPane />
         </section>
       </div>
+
+      <aside v-if="aiOpen" class="flex w-[300px] shrink-0 flex-col border-l border-divider bg-sidebar px-4 py-4 text-sidebar-fg">
+        <h2 class="text-[15px] font-semibold">AI Assistant</h2>
+        <p class="mt-3 text-[13px] leading-relaxed text-sidebar-muted">Design test working — ready to connect an LLM.</p>
+      </aside>
 
       <div
         v-if="dropping"
