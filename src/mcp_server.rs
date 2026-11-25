@@ -30,13 +30,19 @@ const INVALID_PARAMS: i64 = -32602;
 struct Server {
     /// Every path an agent supplies is resolved (and sandboxed) through the project.
     project: Project,
+    read_only: bool,
 }
 
 /// Runs the MCP server until `stdin` is closed.
 pub async fn run(root: PathBuf) -> Result<()> {
+    run_with_mode(root, false).await
+}
+
+/// Runs the server with an enforced read-only tool policy when requested.
+pub async fn run_with_mode(root: PathBuf, read_only: bool) -> Result<()> {
     let project = Project::open(&root)?;
     tracing::info!(root = %project.root().display(), "texcraft MCP server started");
-    let server = Arc::new(Server { project });
+    let server = Arc::new(Server { project, read_only });
 
     // A single writer task serialises output so concurrent requests never interleave lines.
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
@@ -110,7 +116,15 @@ impl Server {
         let result = match method {
             "initialize" => Ok(self.initialize(&params)),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(tools_list()),
+            "tools/list" => {
+                let mut list = tools_list();
+                if self.read_only {
+                    if let Some(tools) = list.get_mut("tools").and_then(Value::as_array_mut) {
+                        tools.retain(|tool| matches!(tool.get("name").and_then(Value::as_str), Some("read_project_file" | "list_available_engines")));
+                    }
+                }
+                Ok(list)
+            },
             "tools/call" => self.tools_call(params).await,
             other => Err(RpcError::new(METHOD_NOT_FOUND, format!("method not found: {other}"))),
         };
@@ -149,6 +163,10 @@ impl Server {
         }
         let call: CallParams = serde_json::from_value(params)
             .map_err(|e| RpcError::new(INVALID_PARAMS, format!("invalid tools/call params: {e}")))?;
+
+        if self.read_only && !matches!(call.name.as_str(), "read_project_file" | "list_available_engines") {
+            return Err(RpcError::new(INVALID_PARAMS, "tool is disabled in read-only mode"));
+        }
 
         let outcome = match call.name.as_str() {
             "compile_tex" => self.compile_tex(call.arguments).await,
@@ -367,4 +385,25 @@ fn tail(s: &str, max: usize) -> String {
     let skip = count - max;
     let start = s.char_indices().nth(skip).map(|(i, _)| i).unwrap_or(0);
     format!("[... {skip} characters truncated ...]\n{}", &s[start..])
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn blocks_writes_and_compile_even_if_called_directly() {
+        let root = std::env::temp_dir().join(format!("localleaf-read-only-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let server = Server { project: Project::open(&root).unwrap(), read_only: true };
+        for name in ["write_project_file", "compile_tex"] {
+            let response = server.handle_message(json!({"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{"name":name, "arguments":{"path":"blocked.tex", "content":"blocked"}}})).await.unwrap();
+            assert_eq!(response["error"]["message"], "tool is disabled in read-only mode");
+        }
+        let response = server.handle_message(json!({"jsonrpc":"2.0", "id":2, "method":"tools/list"})).await.unwrap();
+        let tools = response["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(!root.join("blocked.tex").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -133,6 +133,8 @@ export const editorBridge: {
   setContent?: (text: string) => void;
   goto?: (line: number, column?: number) => void;
   focus?: () => void;
+  selectedText?: () => string;
+  applyText?: (text: string, mode: "insert" | "replace") => boolean;
   /** Runs an editor command (menu bar). */
   command?: (cmd: EditorCommand) => void;
   /** Inserts a CodeMirror snippet (`#{}` fields) at the cursor, wrapping the selection into the first field. */

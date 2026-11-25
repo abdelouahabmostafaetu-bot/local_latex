@@ -7,6 +7,7 @@
 //! can drive the very project that is open in the editor. Edits the agent makes are
 //! picked up by the file watcher and pushed to the UI as events.
 
+mod copilot;
 mod menu;
 mod projects;
 
@@ -565,7 +566,7 @@ fn main() {
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-        if let Err(e) = runtime.block_on(texcraft_core::mcp_server::run(root)) {
+        if let Err(e) = runtime.block_on(texcraft_core::mcp_server::run_with_mode(root, args.iter().any(|a| a == "--mcp-read-only"))) {
             eprintln!("texcraft MCP server error: {e:#}");
             std::process::exit(1);
         }
@@ -575,12 +576,22 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .manage(copilot::CopilotState::default())
         .manage(menu::MenuState::default())
         .setup(|app| {
             menu::install(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            copilot::copilot_auth_status,
+            copilot::copilot_github_login,
+            copilot::copilot_use_cli_credentials,
+            copilot::copilot_cancel_login,
+            copilot::copilot_logout,
+            copilot::copilot_list_models,
+            copilot::copilot_send_message,
+            copilot::copilot_reset_session,
+            copilot::copilot_stop,
             open_project,
             create_project,
             close_project,
@@ -617,6 +628,7 @@ fn main() {
         .run(|app, event| {
             // Quitting (⌘Q, Dock → Quit) would drop edits still waiting for autosave: let the
             // UI save first. It answers with `confirm_exit`; a timeout guards against a hung UI.
+            if let tauri::RunEvent::Exit = event { tauri::async_runtime::block_on(copilot::shutdown(app)); return; }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 let state = app.state::<AppState>();
                 if state.exit_allowed.load(Ordering::SeqCst) || app.webview_windows().is_empty() {

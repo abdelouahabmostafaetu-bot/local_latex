@@ -213,6 +213,17 @@ onMounted(() => {
   editorBridge.setContent = setContent;
   editorBridge.goto = goto;
   editorBridge.focus = () => view?.focus();
+  editorBridge.selectedText = () => view ? view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to) : "";
+  editorBridge.applyText = (text, mode) => {
+    if (!view) return false;
+    const selection = view.state.selection.main;
+    if (mode === "replace" && selection.empty) return false;
+    const from = mode === "replace" ? selection.from : selection.head;
+    const to = mode === "replace" ? selection.to : selection.head;
+    view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length }, scrollIntoView: true, userEvent: "input" });
+    view.focus();
+    return true;
+  };
   editorBridge.command = runCommand;
   editorBridge.insert = insertSnippet;
   refreshAtlasMarks();
@@ -222,6 +233,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   editorBridge.setContent = editorBridge.goto = editorBridge.focus = undefined;
   editorBridge.command = editorBridge.insert = undefined;
+  editorBridge.selectedText = editorBridge.applyText = undefined;
   view?.destroy();
   view = null;
 });
