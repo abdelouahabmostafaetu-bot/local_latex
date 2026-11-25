@@ -8,7 +8,7 @@ import { flushSave, openFile } from "./files";
 // Navigation & SyncTeX
 // ---------------------------------------------------------------------------
 
-export async function gotoLocation(file: string | null, line: number | null) {
+export async function gotoLocation(file: string | null, line: number | null, column?: number) {
   const target = file ?? state.mainDocument;
   if (!target) return;
   if (!findNode(target)) {
@@ -18,7 +18,7 @@ export async function gotoLocation(file: string | null, line: number | null) {
   for (const dir of ancestors(target)) state.expanded[dir] = true;
   await openFile(target);
   await nextTick();
-  if (line) editorBridge.goto?.(line);
+  if (line) editorBridge.goto?.(line, column);
   editorBridge.focus?.();
 }
 

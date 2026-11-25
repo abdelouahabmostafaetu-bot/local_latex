@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { compile, importFiles, state, syncToPdf } from "../lib/store";
+import { indexProjectSymbols } from "../lib/observatory";
 import { syncFromPdfView } from "../lib/pdfSync";
 import { readStored, writeStored } from "../lib/storage";
 import EditorPane from "./EditorPane.vue";
@@ -11,6 +12,7 @@ import Icon from "./Icon.vue";
 import PdfPane from "./PdfPane.vue";
 import ResizeHandle from "./ResizeHandle.vue";
 import Sidebar from "./Sidebar.vue";
+import ReferenceAtlas from "./ReferenceAtlas.vue";
 
 // Panel sizes, remembered across sessions.
 function stored(key: string, fallback: number) {
@@ -19,7 +21,23 @@ function stored(key: string, fallback: number) {
 }
 const sidebarWidth = ref(stored("sidebarWidth", 240));
 const pdfRatio = ref(stored("pdfRatio", 0.5));
-const aiOpen = ref(false);
+const atlasOpen = ref(false);
+const atlasIndex = shallowRef(indexProjectSymbols({}));
+let atlasTimer: ReturnType<typeof setTimeout> | undefined;
+// Debounce project-wide analysis and always prefer the live editor over the disk index.
+watch(
+  () => [state.openPath, state.content, ...Object.entries(state.texts).flat()] as (string | null)[],
+  () => {
+    clearTimeout(atlasTimer);
+    atlasTimer = setTimeout(() => {
+      const texts = { ...state.texts };
+      if (state.openPath && /\.(tex|bib)$/i.test(state.openPath) && state.openKind === "text") texts[state.openPath] = state.content;
+      atlasIndex.value = indexProjectSymbols(texts);
+    }, 250);
+  },
+  { immediate: true },
+);
+const currentIssues = computed(() => atlasIndex.value.missing.filter((item) => item.file === state.openPath));
 const splitArea = ref<HTMLDivElement>();
 
 watch([sidebarWidth, pdfRatio], () => {
@@ -47,7 +65,10 @@ const canSync = computed(() => state.synctexAvailable && !!state.pdfData);
 // Global shortcuts (also when the focus is in the PDF or the file tree).
 function onKey(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && e.key === "Enter") {
+  if (mod && e.altKey && e.key.toLowerCase() === "r") {
+    e.preventDefault();
+    atlasOpen.value = !atlasOpen.value;
+  } else if (mod && e.key === "Enter") {
     e.preventDefault();
     void compile();
   } else if (mod && e.key.toLowerCase() === "s") {
@@ -72,6 +93,7 @@ onMounted(async () => {
   });
 });
 onBeforeUnmount(() => {
+  clearTimeout(atlasTimer);
   window.removeEventListener("keydown", onKey);
   unlistenDrop?.();
 });
@@ -80,7 +102,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex h-full flex-col">
-    <HeaderBar :ai-open="aiOpen" @toggle-ai="aiOpen = !aiOpen" />
+    <HeaderBar :atlas-open="atlasOpen" @toggle-atlas="atlasOpen = !atlasOpen" />
 
     <div class="relative flex min-h-0 flex-1">
       <!-- B. Sidebar -->
@@ -102,7 +124,7 @@ onBeforeUnmount(() => {
       <div ref="splitArea" class="flex min-w-0 flex-1">
         <!-- C. Editor -->
         <section v-show="showEditor" class="min-w-0 flex-1">
-          <EditorPane />
+          <EditorPane :atlas-issues="currentIssues" />
         </section>
 
         <!-- SyncTeX arrows live on the divider, as in Overleaf -->
@@ -137,10 +159,7 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <aside v-if="aiOpen" class="flex w-[300px] shrink-0 flex-col border-l border-divider bg-sidebar px-4 py-4 text-sidebar-fg">
-        <h2 class="text-[15px] font-semibold">AI Assistant</h2>
-        <p class="mt-3 text-[13px] leading-relaxed text-sidebar-muted">Design test working — ready to connect an LLM.</p>
-      </aside>
+      <ReferenceAtlas v-if="atlasOpen" :index="atlasIndex" @close="atlasOpen = false" />
 
       <div
         v-if="dropping"

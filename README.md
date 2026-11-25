@@ -31,6 +31,7 @@ Native Rust + Tauri, compiles with the TeX engines already on your computer, and
 | | |
 |---|---|
 | **Editor** | CodeMirror 6 with LaTeX highlighting, autocompletion for commands, environments, `\ref` labels, `\cite` keys (from your `.bib` files), `\includegraphics` and `\input` paths; Vim and Emacs keybindings; five editor themes; JetBrains Mono. |
+| **Reference Atlas** | A local, live map of literal labels, references and bibliography keys, with cross-file navigation, missing-key underlines, duplicate labels and a direct path to build logs. Open with <kbd>⌥⌘R</kbd> (or Ctrl+Alt+R). It is a lexical guide, not a substitute for compiling. |
 | **PDF preview** | PDF.js with continuous scroll, zoom, fit width/page, page navigation, selectable text and download. |
 | **SyncTeX** | Jump from the cursor to the PDF and back (arrows on the divider, double-click in the PDF, or <kbd>⌥⌘→</kbd>/<kbd>⌥⌘←</kbd>). |
 | **Logs** | Errors, warnings and bad boxes as clickable cards that open the right file at the right line, with hints for common local issues (wrong engine for `fontspec`, missing fonts, files renamed by the OS). |
@@ -106,6 +107,7 @@ The main document is detected automatically (`main.tex`, or the first root file 
 | Find / Find and replace / Go to line | <kbd>⌘F</kbd> / <kbd>⌥⌘F</kbd> / <kbd>⌘L</kbd> |
 | Insert section / subsection / equation / link | <kbd>⌥⌘1</kbd> / <kbd>⌥⌘2</kbd> / <kbd>⌥⌘E</kbd> / <kbd>⌘K</kbd> |
 | Layout: editor & PDF / editor / PDF | <kbd>⌘1</kbd> / <kbd>⌘2</kbd> / <kbd>⌘3</kbd> |
+| Reference Atlas | <kbd>⌥⌘R</kbd> |
 | File tree / Outline / Logs | <kbd>⌥⌘B</kbd> / <kbd>⇧⌘O</kbd> / <kbd>⇧⌘L</kbd> |
 | Editor font size | <kbd>⌘=</kbd> / <kbd>⌘-</kbd> / <kbd>⌘0</kbd> |
 | New file / New project / Open folder | <kbd>⌘N</kbd> / <kbd>⇧⌘N</kbd> / <kbd>⌘O</kbd> |

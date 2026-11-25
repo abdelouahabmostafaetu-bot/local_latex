@@ -39,6 +39,8 @@ import {
 } from "../lib/editor";
 import { FONT_FAMILIES, LINE_HEIGHTS, effectiveEditorTheme, isDarkUi, settings } from "../lib/settings";
 import { compile, editorBridge, recentlyRan, save, state, updateContent, type EditorCommand } from "../lib/store";
+import type { SymbolOccurrence } from "../lib/observatory";
+const props = defineProps<{ atlasIssues: SymbolOccurrence[] }>();
 
 const host = ref<HTMLDivElement>();
 let view: EditorView | null = null;
@@ -85,6 +87,25 @@ const flashField = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+// Mark unresolved literal keys in the editor; ranges are revalidated against the live doc.
+const atlasEffect = StateEffect.define<readonly SymbolOccurrence[]>();
+const atlasField = StateField.define({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    // A text change can invalidate a key; clear immediately until the next index arrives.
+    if (tr.docChanged) deco = Decoration.none;
+    for (const effect of tr.effects) if (effect.is(atlasEffect)) {
+      const ranges = effect.value
+        .filter((item) => item.from >= 0 && item.to <= tr.state.doc.length && item.from < item.to && tr.state.doc.sliceString(item.from, item.to) === item.key)
+        .map((item) => Decoration.mark({ class: "cm-atlas-missing", attributes: { title: `Not found in indexed project files: ${item.key}` } }).range(item.from, item.to));
+      deco = Decoration.set(ranges, true);
+    }
+    return deco;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+function refreshAtlasMarks() { view?.dispatch({ effects: atlasEffect.of(props.atlasIssues.filter((item) => item.file === state.openPath)) }); }
+
 function extensions(): Extension[] {
   return [
     // Vim/Emacs must win over the default keymaps.
@@ -106,6 +127,7 @@ function extensions(): Extension[] {
     highlightSelectionMatches(),
     latexLanguage,
     flashField,
+    atlasField,
     activeLineConf.of(activeLineExt()),
     bracketsConf.of(bracketsExt()),
     completeConf.of(completeExt()),
@@ -129,6 +151,7 @@ function setContent(text: string) {
   // A fresh state per file gives each file its own undo history, like switching docs in Overleaf.
   view.setState(EditorState.create({ doc: text, extensions: extensions() }));
   state.cursor = { line: 1, col: 1 };
+  refreshAtlasMarks();
 }
 
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -192,6 +215,7 @@ onMounted(() => {
   editorBridge.focus = () => view?.focus();
   editorBridge.command = runCommand;
   editorBridge.insert = insertSnippet;
+  refreshAtlasMarks();
   view.focus();
 });
 
@@ -215,6 +239,7 @@ watch(() => settings.autoComplete, () => reconfigure(completeConf, completeExt))
 watch(() => settings.autoCloseBrackets, () => reconfigure(bracketsConf, bracketsExt));
 watch(() => settings.highlightActiveLine, () => reconfigure(activeLineConf, activeLineExt));
 watch(() => settings.spellCheck, () => reconfigure(spellConf, spellExt));
+watch(() => props.atlasIssues, refreshAtlasMarks);
 </script>
 
 <template>
@@ -227,6 +252,12 @@ watch(() => settings.spellCheck, () => reconfigure(spellConf, spellExt));
 }
 :deep(.cm-editor.cm-focused) {
   outline: none;
+}
+:deep(.cm-atlas-missing) {
+  text-decoration: underline wavy #d97c37;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  background: color-mix(in srgb, #eeb669 16%, transparent);
 }
 :deep(.cm-vim-panel),
 :deep(.cm-vim-panel input) {

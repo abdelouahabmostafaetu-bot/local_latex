@@ -5,6 +5,8 @@ import { iconForFile } from "./fileIcons";
 import BinaryPreview from "./BinaryPreview.vue";
 import CodeEditor from "./CodeEditor.vue";
 import Icon from "./Icon.vue";
+import type { SymbolOccurrence } from "../lib/observatory";
+defineProps<{ atlasIssues: SymbolOccurrence[] }>();
 
 const crumbs = computed(() => state.openPath?.split("/") ?? []);
 const fileIcon = computed(() => (state.openPath ? iconForFile(state.openPath) : null));
@@ -30,7 +32,7 @@ const fileIcon = computed(() => (state.openPath ? iconForFile(state.openPath) : 
     </div>
 
     <div class="relative min-h-0 flex-1">
-      <CodeEditor v-show="state.openKind === 'text'" class="absolute inset-0" />
+      <CodeEditor :atlas-issues="atlasIssues" v-show="state.openKind === 'text'" class="absolute inset-0" />
       <BinaryPreview v-if="state.openKind && state.openKind !== 'text'" class="absolute inset-0" />
       <div v-if="!state.openKind" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-surface-muted">
         <Icon name="description" :size="44" />
