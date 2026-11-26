@@ -7,13 +7,14 @@
 //! can drive the very project that is open in the editor. Edits the agent makes are
 //! picked up by the file watcher and pushed to the UI as events.
 
+mod build_cancel;
 mod copilot;
 mod menu;
 mod projects;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -46,6 +47,7 @@ pub(crate) struct AppState {
     exit_allowed: AtomicBool,
     open: RwLock<Option<OpenProject>>,
     compile_lock: tokio::sync::Mutex<()>,
+    compile_cancel: build_cancel::BuildCancellation,
     compiling: Arc<AtomicBool>,
 }
 
@@ -364,26 +366,52 @@ fn list_available_engines() -> Vec<EngineInfo> {
 }
 
 #[tauri::command]
+fn cancel_compile(state: State<'_, AppState>, request_id: String) {
+    state.compile_cancel.cancel(&request_id);
+}
+
+#[tauri::command]
 async fn compile_tex(
     app: AppHandle,
     state: State<'_, AppState>,
     entry_point: String,
     engine: TeXEngine,
     options: Option<CompileOptions>,
+    request_id: Option<String>,
 ) -> CmdResult<Value> {
     let project = state.project()?;
-    let entry = project.resolve(&entry_point).map_err(anyhow_err)?;
+    let source = project.read_text(&entry_point).await.map_err(anyhow_err)?;
+    let entry = project.resolve_tex_root(&entry_point).await.map_err(anyhow_err)?;
+    let root_source = project.read_text(&project.relative(&entry)).await.map_err(anyhow_err)?;
+    let directive = compiler::program_directive(&root_source).or_else(|| compiler::program_directive(&source));
+    let engine = directive.unwrap_or(engine);
+    if directive.is_some() && engine.locate().is_none() {
+        return Err(format!("This document requests {engine}, but it is not installed."));
+    }
     let output_dir = project.resolve(DEFAULT_OUTPUT_DIR).map_err(anyhow_err)?;
     let mut opts = options.unwrap_or_default();
     opts.synctex = true;
 
-    let _guard = state.compile_lock.lock().await;
+    // Register before waiting for the lock: even a queued build can be cancelled.
+    static NEXT_LEGACY_ID: AtomicU64 = AtomicU64::new(0);
+    let id = request_id.unwrap_or_else(|| format!("legacy-{}", NEXT_LEGACY_ID.fetch_add(1, Ordering::Relaxed)));
+    let mut cancel = state.compile_cancel.register(&id);
+    let _registration = build_cancel::Registration { registry: &state.compile_cancel, id: &id };
+    if *cancel.borrow() { return Err("Build cancelled".into()); }
+    let _guard = tokio::select! {
+        guard = state.compile_lock.lock() => guard,
+        _ = cancel.changed() => return Err("Build cancelled".into()),
+    };
+    if *cancel.borrow() { return Err("Build cancelled".into()); }
     state.compiling.store(true, Ordering::SeqCst);
     let _ = app.emit("compile://started", json!({ "entryPoint": entry_point, "engine": engine }));
-
-    let outcome = compiler::compile_with(engine, &entry, &output_dir, &opts).await;
+    // Dropping the compiler future kills its direct child (kill_on_drop in run_tool).
+    let outcome = tokio::select! {
+        result = compiler::compile_with(engine, &entry, &output_dir, &opts) => Some(result),
+        _ = cancel.changed() => None,
+    };
     state.compiling.store(false, Ordering::SeqCst);
-
+    let Some(outcome) = outcome else { return Err("Build cancelled".into()); };
     let payload = match outcome {
         Ok(result) => project.relativize_compilation(&entry, &result),
         Err(e) => {
@@ -409,8 +437,9 @@ async fn clear_build_dir(state: State<'_, AppState>) -> CmdResult<()> {
 // SyncTeX
 // ---------------------------------------------------------------------------
 
-fn output_pdf(project: &Project, main_document: &str) -> CmdResult<PathBuf> {
-    let stem = Path::new(main_document)
+async fn output_pdf(project: &Project, main_document: &str) -> CmdResult<PathBuf> {
+    let root = project.resolve_tex_root(main_document).await.map_err(anyhow_err)?;
+    let stem = root
         .file_stem()
         .ok_or("invalid main document")?
         .to_string_lossy()
@@ -433,7 +462,7 @@ async fn synctex_forward(
     column: u32,
 ) -> CmdResult<Vec<synctex::PdfLocation>> {
     let project = state.project()?;
-    let pdf = output_pdf(&project, &main_document)?;
+    let pdf = output_pdf(&project, &main_document).await?;
     let source = project.resolve(&file).map_err(anyhow_err)?;
     synctex::forward(&pdf, &source, line, column).await.map_err(anyhow_err)
 }
@@ -447,7 +476,7 @@ async fn synctex_inverse(
     y: f64,
 ) -> CmdResult<Option<SyncTexSource>> {
     let project = state.project()?;
-    let pdf = output_pdf(&project, &main_document)?;
+    let pdf = output_pdf(&project, &main_document).await?;
     let Some(loc) = synctex::inverse(&pdf, page, x, y).await.map_err(anyhow_err)? else {
         return Ok(None);
     };
@@ -652,6 +681,7 @@ fn main() {
             export_file,
             list_available_engines,
             compile_tex,
+            cancel_compile,
             clear_build_dir,
             synctex_forward,
             synctex_inverse,

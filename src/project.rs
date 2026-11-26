@@ -3,10 +3,13 @@
 //! Every path coming from an agent (MCP) or the desktop UI is relative to the project
 //! root and is rejected if it escapes it, through `..`, absolute paths or symlinks.
 
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{anyhow, bail, Context, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -127,6 +130,31 @@ impl Project {
             .map(|c| c.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/")
+    }
+
+    /// Follow editor root directives relative to each source file, staying inside the project.
+    /// Cycles, missing files and paths escaping the project are reported instead of compiled.
+    pub async fn resolve_tex_root(&self, entry: &str) -> Result<PathBuf> {
+        static ROOT: OnceLock<Regex> = OnceLock::new();
+        let directive = ROOT.get_or_init(|| Regex::new(r"(?i)^\s*%\s*!tex\s+root\s*=\s*(.+?)\s*$").unwrap());
+        let mut current = self.resolve(entry)?;
+        let mut seen = HashSet::new();
+        for _ in 0..32 {
+            if !seen.insert(current.clone()) { bail!("cyclic TeX root directive"); }
+            if current.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("tex")) != Some(true) {
+                bail!("TeX root must be a .tex file");
+            }
+            let source = self.read_text(&self.relative(&current)).await?;
+            let next = source.lines().take(40).find_map(|line| directive.captures(line).map(|m| m[1].trim().trim_matches('"').to_string()));
+            match next {
+                Some(path) if !path.is_empty() => {
+                    let candidate = current.parent().context("TeX source has no parent")?.join(path);
+                    current = self.resolve(&candidate.to_string_lossy())?;
+                }
+                _ => return Ok(current),
+            }
+        }
+        bail!("too many TeX root directives")
     }
 
     pub async fn read_text(&self, rel: &str) -> Result<String> {
@@ -399,6 +427,19 @@ mod tests {
         assert!(project.resolve(".GIT/config").is_err());
         assert!(project.resolve(".gitignore").is_ok());
         assert!(project.resolve(".github/workflows/ci.yml").is_ok());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn root_directives_are_relative_and_confined() {
+        let (dir, project) = temp_project();
+        project.write("chapters/part.tex", b"% !TeX root = ../main.tex\n").await.unwrap();
+        project.write("main.tex", b"\\documentclass{article}\n").await.unwrap();
+        assert_eq!(project.resolve_tex_root("chapters/part.tex").await.unwrap(), dir.join("main.tex").canonicalize().unwrap());
+        project.write("main.tex", b"% !TEX root = chapters/part.tex\n").await.unwrap();
+        assert!(project.resolve_tex_root("chapters/part.tex").await.is_err());
+        project.write("chapters/part.tex", b"% !TEX root = ../../outside.tex\n").await.unwrap();
+        assert!(project.resolve_tex_root("chapters/part.tex").await.is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

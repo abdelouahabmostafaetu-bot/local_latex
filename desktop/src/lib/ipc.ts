@@ -106,8 +106,9 @@ export const ipc = {
   listEngines: () => invoke<EngineInfo[]>("list_available_engines"),
   listTools: () => invoke<ToolInfo[]>("list_optional_tools"),
   formatBuffer: (content: string) => invoke<string>("format_tex_buffer", { content }),
-  compile: (entryPoint: string, engine: Engine, options: CompileOptions) =>
-    invoke<CompileResult>("compile_tex", { entryPoint, engine, options }),
+  compile: (entryPoint: string, engine: Engine, options: CompileOptions, requestId: string) =>
+    invoke<CompileResult>("compile_tex", { entryPoint, engine, options, requestId }),
+  cancelCompile: (requestId: string) => invoke<void>("cancel_compile", { requestId }),
   clearBuildDir: () => invoke<void>("clear_build_dir"),
 
   synctexAvailable: () => invoke<boolean>("synctex_available"),
