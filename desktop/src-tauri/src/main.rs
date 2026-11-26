@@ -48,6 +48,7 @@ pub(crate) struct AppState {
     open: RwLock<Option<OpenProject>>,
     compile_lock: tokio::sync::Mutex<()>,
     compile_cancel: build_cancel::BuildCancellation,
+    search_generation: Arc<AtomicU64>,
     compiling: Arc<AtomicBool>,
 }
 
@@ -366,6 +367,25 @@ fn list_available_engines() -> Vec<EngineInfo> {
 }
 
 #[tauri::command]
+fn cancel_project_search(state: State<'_, AppState>) {
+    state.search_generation.fetch_add(1, Ordering::SeqCst);
+}
+
+#[tauri::command]
+async fn project_search(
+    state: State<'_, AppState>, query: String, is_regex: bool, case_sensitive: bool,
+    overlay: Option<texcraft_core::search::SearchOverlay>,
+) -> CmdResult<texcraft_core::search::SearchReport> {
+    let project = state.project()?;
+    let generation = state.search_generation.clone();
+    let ticket = generation.fetch_add(1, Ordering::SeqCst) + 1;
+    tokio::task::spawn_blocking(move || {
+        texcraft_core::search::search_project(&project, &query, is_regex, case_sensitive, overlay,
+            || generation.load(Ordering::SeqCst) != ticket).map_err(anyhow_err)
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
 fn cancel_compile(state: State<'_, AppState>, request_id: String) {
     state.compile_cancel.cancel(&request_id);
 }
@@ -680,6 +700,8 @@ fn main() {
             import_files,
             export_file,
             list_available_engines,
+            project_search,
+            cancel_project_search,
             compile_tex,
             cancel_compile,
             clear_build_dir,

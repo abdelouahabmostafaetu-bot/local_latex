@@ -9,6 +9,7 @@ import { webkit } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 import { testMathAuthoring } from "./math-authoring-smoke.mjs";
+import { testProjectSearch } from "./project-search-smoke.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const [projectDir = path.join(here, "fixture"), outDir = path.join(here, "screenshots"), url = "http://localhost:1420"] =
@@ -62,6 +63,18 @@ const handlers = {
     return sources.map((s) => (targetDir ? `${targetDir}/` : "") + path.basename(s.path));
   },
   close_project: () => null,
+  cancel_project_search: () => null,
+  project_search: ({ query, isRegex, caseSensitive, overlay }) => {
+    const pattern = isRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(pattern, caseSensitive ? "" : "i");
+    const files = ["main.tex", "chapters/method.tex"];
+    const hits = [];
+    for (const file of files) {
+      const content = overlay?.path === file ? overlay.content : (written.get(file) ?? fs.readFileSync(path.join(root, file), "utf8"));
+      content.split("\n").forEach((line, i) => { const match = re.exec(line); if (match) hits.push({ file, line: i + 1, column: match.index + 1, preview: line }); });
+    }
+    return { hits, filesSearched: files.length, skipped: 0, truncated: false };
+  },
   list_available_engines: () => [
     { engine: "tectonic", installed: true, path: "/opt/homebrew/bin/tectonic" },
     { engine: "pdflatex", installed: true, path: "/Library/TeX/texbin/pdflatex" },
@@ -184,6 +197,7 @@ await shot("1-editor-dark");
 // --- Editor behaviour regressions (skipped with DOCS=1 for clean README screenshots) ---
 if (!process.env.DOCS) {
 await testMathAuthoring(page, menu);
+await testProjectSearch(page);
 const activeLine = () => page.locator(".cm-activeLine").innerText();
 const newLine = async (text) => {
   await page.click(".cm-content");

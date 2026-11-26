@@ -14,6 +14,7 @@ import ResizeHandle from "./ResizeHandle.vue";
 import Sidebar from "./Sidebar.vue";
 import ReferenceAtlas from "./ReferenceAtlas.vue";
 import CopilotSidebar from "./CopilotSidebar.vue";
+import ProjectSearch from "./ProjectSearch.vue";
 
 // Panel sizes, remembered across sessions.
 function stored(key: string, fallback: number) {
@@ -24,6 +25,7 @@ const sidebarWidth = ref(stored("sidebarWidth", 240));
 const pdfRatio = ref(stored("pdfRatio", 0.5));
 const atlasOpen = ref(false);
 const copilotOpen = ref(false);
+const searchOpen = ref(false);
 const atlasIndex = shallowRef(indexProjectSymbols({}));
 let atlasTimer: ReturnType<typeof setTimeout> | undefined;
 // Debounce project-wide analysis and always prefer the live editor over the disk index.
@@ -67,7 +69,10 @@ const canSync = computed(() => state.synctexAvailable && !!state.pdfData);
 // Global shortcuts (also when the focus is in the PDF or the file tree).
 function onKey(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && e.altKey && e.key.toLowerCase() === "r") {
+  if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    searchOpen.value = true;
+  } else if (mod && e.altKey && e.key.toLowerCase() === "r") {
     e.preventDefault();
     atlasOpen.value = !atlasOpen.value;
   } else if (mod && e.key === "Enter") {
@@ -104,8 +109,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex h-full flex-col">
-    <HeaderBar :atlas-open="atlasOpen" :copilot-open="copilotOpen" @toggle-atlas="atlasOpen = !atlasOpen; if (atlasOpen) copilotOpen = false" @toggle-copilot="copilotOpen = !copilotOpen; if (copilotOpen) atlasOpen = false" />
+    <HeaderBar :atlas-open="atlasOpen" :copilot-open="copilotOpen" @toggle-atlas="atlasOpen = !atlasOpen; if (atlasOpen) copilotOpen = false" @toggle-copilot="copilotOpen = !copilotOpen; if (copilotOpen) atlasOpen = false" @search="searchOpen = true" />
 
+    <ProjectSearch v-if="searchOpen" @close="searchOpen = false" />
     <div class="relative flex min-h-0 flex-1">
       <!-- B. Sidebar -->
       <template v-if="!state.ui.sidebarCollapsed">

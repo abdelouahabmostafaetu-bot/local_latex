@@ -72,6 +72,9 @@ export interface CompileOptions {
   stop_on_first_error: boolean;
 }
 
+export interface SearchHit { file: string; line: number; column: number; preview: string }
+export interface SearchReport { hits: SearchHit[]; filesSearched: number; skipped: number; truncated: boolean }
+
 export interface PdfLocation {
   page: number;
   h: number;
@@ -103,6 +106,9 @@ export const ipc = {
   moveProjectFolder: (root: string, destination: string) => invoke<string>("move_project_folder", { root, destination }),
   trashProjectFolder: (root: string) => invoke<void>("trash_project_folder", { root }),
 
+  searchProject: (query: string, isRegex: boolean, caseSensitive: boolean, overlay: { path: string; content: string } | null) =>
+    invoke<SearchReport>("project_search", { query, isRegex, caseSensitive, overlay }),
+  cancelProjectSearch: () => invoke<void>("cancel_project_search"),
   listEngines: () => invoke<EngineInfo[]>("list_available_engines"),
   listTools: () => invoke<ToolInfo[]>("list_optional_tools"),
   formatBuffer: (content: string) => invoke<string>("format_tex_buffer", { content }),

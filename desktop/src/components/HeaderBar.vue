@@ -8,7 +8,7 @@ import RecompileButton from "./RecompileButton.vue";
 import ToolbarButton from "./ToolbarButton.vue";
 
 defineProps<{ atlasOpen: boolean; copilotOpen: boolean }>();
-const emit = defineEmits<{ toggleAtlas: []; toggleCopilot: [] }>();
+const emit = defineEmits<{ toggleAtlas: []; toggleCopilot: []; search: [] }>();
 
 const editing = ref(false);
 const draft = ref("");
@@ -115,6 +115,7 @@ function toggleLogs() {
       :badge-kind="counts.errors ? 'error' : 'warning'"
       @click="toggleLogs"
     />
+    <ToolbarButton icon="search" label="Search" title="Search project (Ctrl/⌘ + Shift + F)" @click="emit('search')" />
     <ToolbarButton icon="toc" label="Outline" :active="state.ui.showOutline" @click="state.ui.showOutline = !state.ui.showOutline" />
 
     <button class="atlas-launcher ml-2 flex h-9 items-center gap-2 rounded-md px-3 text-[12px] font-semibold"

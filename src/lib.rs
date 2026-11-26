@@ -7,6 +7,7 @@ pub mod compiler;
 pub mod env;
 pub mod mcp_server;
 pub mod project;
+pub mod search;
 pub mod synctex;
 
 /// Where build artifacts go by default, relative to the project root.
