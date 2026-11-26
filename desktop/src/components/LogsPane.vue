@@ -121,7 +121,7 @@ function location(item: Diagnostic) {
                 </button>
               </div>
             </div>
-            <button class="mx-3 mb-3 rounded border border-surface-border px-2.5 py-1 text-[12px] font-semibold hover:bg-surface-hover" title="Send this diagnostic and relevant source context to Copilot" @click="state.ui.aiDiagnostic = { ...item }">Send to Copilot ↗</button>
+            <button class="mx-3 mb-3 rounded border border-surface-border px-2.5 py-1 text-[12px] font-semibold hover:bg-surface-hover" title="Send this diagnostic and relevant source context to the selected AI provider" @click="state.ui.aiDiagnostic = { ...item }">Send to AI ↗</button>
           </article>
         </template>
       </template>

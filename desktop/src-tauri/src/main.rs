@@ -11,6 +11,7 @@ mod build_cancel;
 mod copilot;
 mod menu;
 mod projects;
+mod provider;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -667,6 +668,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .manage(copilot::CopilotState::default())
+        .manage(provider::ProviderState::default())
         .manage(menu::MenuState::default())
         .setup(|app| {
             menu::install(app.handle())?;
@@ -682,6 +684,8 @@ fn main() {
             copilot::copilot_send_message,
             copilot::copilot_reset_session,
             copilot::copilot_stop,
+            provider::provider_send,
+            provider::provider_stop,
             list_optional_tools,
             format_tex_buffer,
             open_project,

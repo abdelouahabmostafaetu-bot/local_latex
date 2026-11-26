@@ -36,6 +36,7 @@ function tree(dir = root) {
 
 let failCompile = false;
 const sentCopilotPrompts = [];
+const providerRequests = [];
 let exitConfirmed = false;
 let savedSettings = null;
 let renamedTo = null;
@@ -55,6 +56,8 @@ const handlers = {
   copilot_list_models: () => [],
   copilot_reset_session: () => null,
   copilot_send_message: ({ prompt }) => { sentCopilotPrompts.push(prompt); return null; },
+  provider_send: (args) => { providerRequests.push(args); return null; },
+  provider_stop: () => null,
 
   initial_project: () => (process.env.NO_PROJECT ? null : root),
   open_project: () => ({
@@ -206,10 +209,34 @@ if (process.env.AI_REVIEW_ONLY) {
   await page.click('button[title^="Recompile"]');
   if (!await page.getByText('Undefined control sequence.').count()) await page.locator('button[title="Logs"]').click();
   const errorCard = page.locator('article').filter({ hasText: 'Undefined control sequence.' });
-  await errorCard.getByRole('button', { name: /Send to Copilot/ }).click();
+  await errorCard.getByRole('button', { name: /Send to AI/ }).click();
   await page.waitForFunction(() => document.body.innerText.includes('Help fix this LaTeX error'));
   if (!sentCopilotPrompts.at(-1)?.includes('Undefined control sequence.') || !sentCopilotPrompts.at(-1)?.includes('Main document preamble')) throw new Error('Diagnostic context was not sent to Copilot');
   console.log('PASS: diagnostic and preamble sent to mocked Copilot');
+  await page.evaluate(() => window.__emit('copilot:done', null));
+  await page.getByLabel('AI PROVIDER').selectOption('ollama');
+  await page.getByLabel('Model name').fill('fixture-model');
+  await page.getByLabel('Message AI').fill('Explain this equation');
+  await page.getByRole('button', {name:'Send ↑'}).click();
+  await page.evaluate((id) => { window.__emit('provider:chunk',{requestId:id,text:'Hello from local model'}); window.__emit('provider:done',id); }, providerRequests.at(-1).requestId);
+  await page.getByText('Hello from local model').waitFor();
+  if (providerRequests.at(-1)?.model !== 'fixture-model' || providerRequests.at(-1)?.baseUrl !== 'http://127.0.0.1:11434/v1') throw new Error('Wrong provider request');
+  await page.getByLabel('Message AI').fill('Cancel this');
+  await page.getByRole('button', {name:'Send ↑'}).click();
+  const oldId = providerRequests.at(-1).requestId;
+  await page.getByRole('button', {name:'Stop', exact:true}).click();
+  await page.getByLabel('Message AI').fill('New request');
+  await page.getByRole('button', {name:'Send ↑'}).click();
+  const newId = providerRequests.at(-1).requestId;
+  await page.evaluate(({oldId,newId}) => { window.__emit('provider:chunk',{requestId:oldId,text:'STALE-INJECTION'}); window.__emit('provider:done',oldId); window.__emit('provider:chunk',{requestId:newId,text:'Fresh response'}); window.__emit('provider:done',newId); }, {oldId,newId});
+  await page.getByText('Fresh response').waitFor();
+  if (await page.getByText('STALE-INJECTION').count()) throw new Error('Stale provider output was accepted');
+
+  await page.getByLabel('AI PROVIDER').selectOption('custom');
+  await page.getByLabel('API key (optional)').fill('fixture-key');
+  if (await page.evaluate(() => JSON.stringify(localStorage).includes('fixture-key'))) throw new Error('API key was persisted');
+  console.log('PASS: mocked local provider, streaming, switching, non-persisted API key');
+
   if (errors.length) throw new Error(`UI errors: ${errors.join(', ')}`);
   await browser.close();
   process.exit(0);
