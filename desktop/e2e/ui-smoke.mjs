@@ -8,6 +8,7 @@
 import { webkit } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { testMathAuthoring } from "./math-authoring-smoke.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const [projectDir = path.join(here, "fixture"), outDir = path.join(here, "screenshots"), url = "http://localhost:1420"] =
@@ -182,6 +183,7 @@ await shot("1-editor-dark");
 
 // --- Editor behaviour regressions (skipped with DOCS=1 for clean README screenshots) ---
 if (!process.env.DOCS) {
+await testMathAuthoring(page, menu);
 const activeLine = () => page.locator(".cm-activeLine").innerText();
 const newLine = async (text) => {
   await page.click(".cm-content");

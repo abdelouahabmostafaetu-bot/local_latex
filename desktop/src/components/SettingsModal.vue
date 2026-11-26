@@ -99,6 +99,12 @@ async function copy(text: string) {
           <SettingRow label="Auto-complete" hint="Suggest commands, environments, \ref labels and \cite keys">
             <Toggle v-model="settings.autoComplete" />
           </SettingRow>
+          <SettingRow label="Math hover preview" hint="Local KaTeX preview for same-line $…$, $$…$$, \(...\) and \[...\]">
+            <Toggle v-model="settings.mathHoverPreview" aria-label="Math hover preview" />
+          </SettingRow>
+          <SettingRow label="Quick fractions" hint="Opt in: type / after a simple numerator in same-line math; undo to revert">
+            <Toggle v-model="settings.quickFractions" aria-label="Quick fractions" />
+          </SettingRow>
           <SettingRow label="Auto-close brackets"><Toggle v-model="settings.autoCloseBrackets" /></SettingRow>
           <SettingRow label="Wrap long lines" hint="Soft-wrap lines wider than the editor">
             <Toggle v-model="settings.lineWrapping" />

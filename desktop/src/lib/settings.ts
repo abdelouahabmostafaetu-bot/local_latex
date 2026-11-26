@@ -25,6 +25,9 @@ export interface Settings {
   spellCheck: boolean;
   /** Opt-in; missing or failing tex-fmt never prevents a save. */
   formatOnSave: boolean;
+  /** Conservative same-line math preview and opt-in fraction expansion. */
+  mathHoverPreview: boolean;
+  quickFractions: boolean;
 }
 
 const SETTINGS_VERSION = 2;
@@ -43,6 +46,8 @@ const DEFAULTS: Settings = {
   highlightActiveLine: true,
   spellCheck: false,
   formatOnSave: false,
+  mathHoverPreview: true,
+  quickFractions: false,
 };
 
 export const FONT_FAMILIES: Record<FontFamily, { label: string; css: string }> = {
