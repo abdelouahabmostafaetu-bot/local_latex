@@ -133,10 +133,14 @@ async fn create_project(
     state: State<'_, AppState>,
     parent: String,
     name: String,
+    template_kind: Option<String>,
 ) -> CmdResult<ProjectInfo> {
     let name = name.trim().to_string();
     if name.is_empty() || name.contains(['/', '\\', ':']) || name.starts_with('.') {
         return Err("invalid project name".into());
+    }
+    if !matches!(template_kind.as_deref(), None | Some("blank") | Some("arabic")) {
+        return Err("unknown project template".into());
     }
     let dir = Path::new(&parent).join(&name);
     if dir.exists() {
@@ -144,11 +148,16 @@ async fn create_project(
     }
     tokio::fs::create_dir_all(&dir).await.map_err(err)?;
     let title = name.replace(['\\', '{', '}', '%', '#', '&', '$', '_', '^', '~'], " ");
-    let template = format!(
+    let blank_template = format!(
         "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\n\
          \\title{{{title}}}\n\\author{{}}\n\\date{{\\today}}\n\n\\begin{{document}}\n\n\\maketitle\n\n\
          \\section{{Introduction}}\n\nYour text here.\n\n\\end{{document}}\n"
     );
+    let template = match template_kind.as_deref() {
+        None | Some("blank") => blank_template,
+        Some("arabic") => include_str!("../../../templates/arabic-main.tex").to_string(),
+        Some(_) => return Err("unknown project template".into()),
+    };
     tokio::fs::write(dir.join("main.tex"), template).await.map_err(err)?;
     open_project_at(app, &state, dir).await
 }
@@ -306,6 +315,38 @@ async fn export_file(state: State<'_, AppState>, path: String, destination: Stri
 // ---------------------------------------------------------------------------
 // Compilation
 // ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolInfo { name: String, path: Option<String> }
+
+#[tauri::command]
+fn list_optional_tools() -> Vec<ToolInfo> {
+    ["pdflatex", "xelatex", "lualatex", "latexmk", "tectonic", "synctex", "tex-fmt", "texlab", "texquill", "rtex", "pandoc"]
+        .into_iter().map(|name| ToolInfo { name: name.into(), path: compiler::find_in_path(name).map(|p| p.to_string_lossy().into_owned()) }).collect()
+}
+
+/// Format an in-memory buffer. The caller applies it only if that buffer has not changed.
+#[tauri::command]
+async fn format_tex_buffer(content: String) -> CmdResult<String> {
+    use tokio::io::AsyncWriteExt;
+    use std::process::Stdio;
+    if content.len() > texcraft_core::project::MAX_TEXT_FILE_BYTES as usize { return Err("File is too large to format.".into()); }
+    let binary = compiler::find_in_path("tex-fmt").ok_or_else(|| "tex-fmt was not found in PATH. See Toolchain & Diagnostics for installation guidance.".to_string())?;
+    let mut child = tokio::process::Command::new(binary).arg("--stdin")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true)
+        .spawn().map_err(err)?;
+    let mut stdin = child.stdin.take().ok_or("Could not open formatter input.")?;
+    let job = async move {
+        let write = async move { stdin.write_all(content.as_bytes()).await };
+        let (written, output) = tokio::join!(write, child.wait_with_output());
+        written.map_err(err)?;
+        let output = output.map_err(err)?;
+        if !output.status.success() { return Err(format!("tex-fmt failed: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+        String::from_utf8(output.stdout).map_err(err)
+    };
+    tokio::time::timeout(Duration::from_secs(15), job).await.map_err(|_| "tex-fmt timed out".to_string())?
+}
 
 #[tauri::command]
 fn list_available_engines() -> Vec<EngineInfo> {
@@ -592,6 +633,8 @@ fn main() {
             copilot::copilot_send_message,
             copilot::copilot_reset_session,
             copilot::copilot_stop,
+            list_optional_tools,
+            format_tex_buffer,
             open_project,
             create_project,
             close_project,

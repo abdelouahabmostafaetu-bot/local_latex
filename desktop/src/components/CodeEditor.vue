@@ -213,6 +213,11 @@ onMounted(() => {
   editorBridge.setContent = setContent;
   editorBridge.goto = goto;
   editorBridge.focus = () => view?.focus();
+  editorBridge.replaceDocument = (text) => {
+    if (!view) return false;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, userEvent: "input" });
+    return true;
+  };
   editorBridge.selectedText = () => view ? view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to) : "";
   editorBridge.applyText = (text, mode) => {
     if (!view) return false;
@@ -234,6 +239,7 @@ onBeforeUnmount(() => {
   editorBridge.setContent = editorBridge.goto = editorBridge.focus = undefined;
   editorBridge.command = editorBridge.insert = undefined;
   editorBridge.selectedText = editorBridge.applyText = undefined;
+  editorBridge.replaceDocument = undefined;
   view?.destroy();
   view = null;
 });

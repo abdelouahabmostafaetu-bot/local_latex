@@ -78,7 +78,7 @@ function location(item: Diagnostic) {
           <Icon name="report" :size="18" class="text-danger" />
           <div v-if="state.result.pdf_path">
             <p class="font-semibold">Compiled with errors.</p>
-            <p class="text-surface-muted">The PDF was produced anyway, but some content may be missing or wrong.</p>
+            <p class="text-surface-muted">{{ state.pdfData ? "Showing the last successful PDF; the new output contains errors." : "A PDF was produced with errors; fix them and compile again." }}</p>
           </div>
           <div v-else>
             <p class="font-semibold">This project did not compile.</p>

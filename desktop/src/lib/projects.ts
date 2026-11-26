@@ -3,7 +3,7 @@ import { watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ipc, type Engine, type ProjectInfo } from "./ipc";
-import { requiredEngine } from "./latex";
+import { programDirective, requiredEngine } from "./latex";
 import { readStored, removeStored, writeStored } from "./storage";
 import { allFiles, ancestors, guarded, notify, session, state, type ProjectPrefs } from "./state";
 import { cancelPendingSave, flushSave, indexProject, onExternalChange, openFile } from "./files";
@@ -127,8 +127,8 @@ export async function openProject(path: string) {
   if (info) await loadProject(info);
 }
 
-export async function createProject(parent: string, name: string) {
-  const info = await guarded(() => ipc.createProject(parent, name));
+export async function createProject(parent: string, name: string, templateKind: "blank" | "arabic" = "blank") {
+  const info = await guarded(() => ipc.createProject(parent, name, templateKind));
   if (info) await loadProject(info);
 }
 
@@ -170,8 +170,11 @@ async function loadProject(info: ProjectInfo) {
   await subscribeToEvents();
   await indexProject();
   // First time a project is opened: pick the engine its preamble needs (e.g. fontspec → XeLaTeX/LuaLaTeX).
-  const needed = !prefs.engine && state.mainDocument ? requiredEngine(state.texts[state.mainDocument] ?? "") : null;
+  const source = state.mainDocument ? state.texts[state.mainDocument] ?? "" : "";
+  const explicit = programDirective(source);
+  const needed = explicit ?? (!prefs.engine ? requiredEngine(source) : null);
   if (needed && installed.includes(needed)) state.engine = needed;
+  else if (explicit) notify(`The document requests ${explicit}, but it is not installed. Install it before compiling.`, "error");
   loadingProject = false;
   // Persist the resolved settings (also migrates legacy ones into the project).
   savePrefs();

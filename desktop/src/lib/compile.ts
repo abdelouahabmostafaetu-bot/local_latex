@@ -1,6 +1,6 @@
 // Compilation: running the TeX engine, loading the PDF, diagnostics and auto-compile.
 import { ipc, errorMessage, type Diagnostic } from "./ipc";
-import { basename } from "./latex";
+import { basename, programDirective } from "./latex";
 import { guarded, notify, recentlyRan, session, state } from "./state";
 import { flushSave } from "./files";
 
@@ -10,9 +10,9 @@ import { flushSave } from "./files";
 
 /** `queued` marks the internal re-run of a request that arrived mid-compile (never deduplicated). */
 let autoCompileTimer: ReturnType<typeof setTimeout> | undefined;
-const AUTO_COMPILE_DELAY = 2000;
+const AUTO_COMPILE_DELAY = 700;
 
-/** Recompiles a couple of seconds after the last edit (Auto compile). */
+/** Recompiles 700ms after the last edit (Auto compile). */
 export function scheduleAutoCompile() {
   clearTimeout(autoCompileTimer);
   autoCompileTimer = setTimeout(() => void compile(), AUTO_COMPILE_DELAY);
@@ -38,6 +38,11 @@ export async function compile(queued = false) {
   state.compiling = true;
   state.compileError = null;
   try {
+    const directive = programDirective(state.texts[state.mainDocument] ?? "");
+    if (directive && !state.engines.some(e => e.engine === directive && e.installed)) {
+      throw new Error(`This document requests ${directive}, but it is not installed.`);
+    }
+    if (directive) state.engine = directive;
     const result = await ipc.compile(state.mainDocument, state.engine, {
       draft: state.draft,
       stop_on_first_error: state.stopOnFirstError,
@@ -45,7 +50,7 @@ export async function compile(queued = false) {
     // Results of a project that is no longer open are dropped.
     if (gen === session.generation) {
       state.result = result;
-      if (result.pdf_path) {
+      if (result.success && result.pdf_path) {
         state.pdfPath = result.pdf_path;
         await reloadPdf();
       }

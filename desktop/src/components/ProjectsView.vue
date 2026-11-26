@@ -22,6 +22,7 @@ import PromptModal from "./PromptModal.vue";
 
 const search = ref("");
 const naming = ref(false);
+const projectTemplate = ref<"blank" | "arabic">("blank");
 const renaming = ref<RecentProject | null>(null);
 const trashing = ref<RecentProject | null>(null);
 
@@ -31,6 +32,7 @@ watch(
   (requested) => {
     if (!requested) return;
     state.ui.newProjectRequested = false;
+    projectTemplate.value = "blank";
     naming.value = true;
   },
   { immediate: true },
@@ -70,7 +72,7 @@ async function openFolder() {
 async function createBlank(name: string) {
   naming.value = false;
   const parent = await openDialog({ directory: true, title: `Choose where to create “${name}”` });
-  if (typeof parent === "string") await createProject(parent, name);
+  if (typeof parent === "string") await createProject(parent, name, projectTemplate.value);
 }
 
 function when(ts: number) {
@@ -104,7 +106,8 @@ function shortPath(root: string) {
               New Project <Icon name="expand_more" :size="18" />
             </button>
           </template>
-          <MenuItem icon="note_add" @select="naming = true">Blank project</MenuItem>
+          <MenuItem icon="note_add" @select="projectTemplate = 'blank'; naming = true">Blank project</MenuItem>
+          <MenuItem icon="translate" @select="projectTemplate = 'arabic'; naming = true">Arabic project (LuaLaTeX)</MenuItem>
           <MenuItem icon="folder_open" @select="openFolder()">Open existing folder…</MenuItem>
         </Dropdown>
         <nav class="mt-2 flex flex-col">
@@ -134,7 +137,7 @@ function shortPath(root: string) {
           <h2 class="mt-4 text-[20px] font-semibold">Welcome to LocalLeaf</h2>
           <p class="mt-2 text-[14px] text-surface-muted">Create a new LaTeX project or open an existing folder to get started.</p>
           <div class="mt-6 flex justify-center gap-3">
-            <button class="rounded-full bg-accent px-5 py-2 text-[14px] font-semibold text-white hover:bg-accent-hover" @click="naming = true">
+            <button class="rounded-full bg-accent px-5 py-2 text-[14px] font-semibold text-white hover:bg-accent-hover" @click="projectTemplate = 'blank'; naming = true">
               Create first project
             </button>
             <button class="rounded-full border border-surface-border px-5 py-2 text-[14px] font-semibold hover:bg-surface-hover" @click="openFolder()">
@@ -207,6 +210,6 @@ function shortPath(root: string) {
       @close="trashing = null"
       @confirm="confirmTrash"
     />
-    <PromptModal v-if="naming" title="New project" label="Project name" confirm-label="Choose location…" @close="naming = false" @confirm="createBlank" />
+    <PromptModal v-if="naming" :title="projectTemplate === 'arabic' ? 'New Arabic project' : 'New project'" label="Project name" confirm-label="Choose location…" @close="naming = false" @confirm="createBlank" />
   </div>
 </template>

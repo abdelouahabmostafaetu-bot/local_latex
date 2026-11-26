@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { ENGINE_LABELS } from "../lib/ipc";
+import { computed, ref, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { ENGINE_LABELS, ipc, type ToolInfo } from "../lib/ipc";
 import { EDITOR_THEMES } from "../lib/editor";
 import { FONT_FAMILIES, LINE_HEIGHTS, settings } from "../lib/settings";
 import { allFiles, notify, state } from "../lib/store";
@@ -12,6 +13,7 @@ import Toggle from "./Toggle.vue";
 const allTabs = [
   { id: "editor", label: "Editor", icon: "code", needsProject: false },
   { id: "compiler", label: "Compiler", icon: "build", needsProject: true },
+  { id: "tools", label: "Toolchain & Diagnostics", icon: "monitor_heart", needsProject: false },
   { id: "appearance", label: "Appearance", icon: "palette", needsProject: false },
   { id: "shortcuts", label: "Shortcuts", icon: "keyboard", needsProject: false },
   { id: "agent", label: "AI agent (MCP)", icon: "smart_toy", needsProject: true },
@@ -41,6 +43,20 @@ const SHORTCUTS: { group: string; items: [string, string][] }[] = [
   },
 ];
 
+const tools = ref<ToolInfo[]>([]);
+const toolError = ref("");
+const checkingTools = ref(false);
+const toolGuides: Record<string, string> = {
+  pdflatex: "https://www.tug.org/texlive/", xelatex: "https://www.tug.org/texlive/", lualatex: "https://www.tug.org/texlive/", latexmk: "https://www.tug.org/texlive/", synctex: "https://www.tug.org/texlive/",
+  tectonic: "https://tectonic-typesetting.github.io/en-US/install.html", "tex-fmt": "https://github.com/WGUNDERWOOD/tex-fmt#installation",
+  texlab: "https://github.com/latex-lsp/texlab", pandoc: "https://pandoc.org/installing.html",
+};
+async function checkTools() {
+  checkingTools.value = true; toolError.value = "";
+  try { tools.value = await ipc.listTools(); } catch { toolError.value = "Could not inspect PATH. Try again."; }
+  finally { checkingTools.value = false; }
+}
+watch(() => state.ui.settingsTab, (tab) => { if (tab === "tools") void checkTools(); }, { immediate: true });
 const texFiles = computed(() => allFiles(state.tree).filter((p) => p.endsWith(".tex")));
 const fontSizes = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
 
@@ -65,8 +81,8 @@ async function copy(text: string) {
 
 <template>
   <Modal title="Settings" width="46rem" @close="state.ui.settingsOpen = false">
-    <div class="flex min-h-[26rem]">
-      <nav class="w-48 shrink-0 border-r border-surface-border p-2">
+    <div class="settings-layout flex min-h-[26rem]">
+      <nav class="settings-nav w-48 shrink-0 border-r border-surface-border p-2">
         <button
           v-for="t in tabs"
           :key="t.id"
@@ -78,7 +94,7 @@ async function copy(text: string) {
         </button>
       </nav>
 
-      <div class="min-w-0 flex-1 px-6 py-2">
+      <div class="settings-main min-w-0 flex-1 px-6 py-2">
         <template v-if="state.ui.settingsTab === 'editor'">
           <SettingRow label="Auto-complete" hint="Suggest commands, environments, \ref labels and \cite keys">
             <Toggle v-model="settings.autoComplete" />
@@ -88,6 +104,9 @@ async function copy(text: string) {
             <Toggle v-model="settings.lineWrapping" />
           </SettingRow>
           <SettingRow label="Highlight current line"><Toggle v-model="settings.highlightActiveLine" /></SettingRow>
+          <SettingRow label="Format on save" hint="Optional tex-fmt; skips formatting if the file changes while it runs">
+            <Toggle v-model="settings.formatOnSave" />
+          </SettingRow>
           <SettingRow label="Spell check" hint="System spell checker; it also underlines LaTeX commands">
             <Toggle v-model="settings.spellCheck" />
           </SettingRow>
@@ -116,7 +135,7 @@ async function copy(text: string) {
               <option v-for="f in texFiles" :key="f" :value="f">{{ f }}</option>
             </select>
           </SettingRow>
-          <SettingRow label="Auto compile" hint="Recompile a couple of seconds after you stop typing">
+          <SettingRow label="Auto compile" hint="Recompile 700 ms after you stop typing">
             <Toggle v-model="state.autoCompile" />
           </SettingRow>
           <SettingRow label="Fast [draft] mode" hint="Images are replaced by placeholders (LaTeX engines)">
@@ -136,6 +155,19 @@ async function copy(text: string) {
               <span class="text-[11.5px] text-surface-muted">{{ state.synctexAvailable ? "code ↔ PDF sync enabled" : "install TeX Live for SyncTeX" }}</span>
             </div>
           </div>
+        </template>
+
+        <template v-else-if="state.ui.settingsTab === 'tools'">
+          <div class="tools-heading flex items-center justify-between gap-3 py-3"><div><h3 class="text-[15px] font-semibold">Toolchain & Diagnostics</h3><p class="text-[12px] text-surface-muted">Local executables found in PATH. Missing tools remain optional.</p></div><button class="rounded border border-surface-border px-3 py-1.5 text-[12px] hover:bg-surface-hover" :disabled="checkingTools" @click="checkTools">{{ checkingTools ? "Checking…" : "Check again" }}</button></div>
+          <p v-if="toolError" role="alert" class="text-[12px] text-danger">{{ toolError }}</p>
+          <div class="max-h-[22rem] overflow-auto divide-y divide-surface-border">
+            <div v-for="tool in tools" :key="tool.name" class="tool-row flex items-center gap-3 py-2 text-[12px]">
+              <Icon :name="tool.path ? 'check_circle' : 'info'" :size="17" :class="tool.path ? 'text-accent' : 'text-surface-muted'" />
+              <span class="tool-name w-20 font-semibold">{{ tool.name }}</span><span class="tool-path min-w-0 flex-1 truncate text-surface-muted" :title="tool.path ?? 'Not found in PATH'">{{ tool.path ?? "Not found in PATH" }}</span>
+              <button v-if="!tool.path && toolGuides[tool.name]" class="text-accent underline" @click="invoke('open_external', { url: toolGuides[tool.name] })">Setup guide ↗</button>
+            </div>
+          </div>
+          <p class="pt-3 text-[12px] text-surface-muted">Zotero connectivity and OCR model detection are not yet supported.</p>
         </template>
 
         <template v-else-if="state.ui.settingsTab === 'appearance'">
@@ -208,5 +240,17 @@ async function copy(text: string) {
 .select {
   @apply rounded border border-surface-border bg-surface px-2 py-1 text-[13px] text-surface-fg outline-none focus:border-accent;
   min-width: 12rem;
+}
+@media (max-width: 700px) {
+  .settings-layout { flex-direction: column; min-height: 0; }
+  .settings-nav { display: flex; width: auto; max-width: 100%; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--color-surface-border); }
+  .settings-nav button { width: auto; flex: 0 0 auto; white-space: nowrap; }
+  .settings-main { padding: 8px 16px 20px; }
+  .tools-heading { align-items: flex-start; flex-wrap: wrap; }
+  .tool-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 5px; }
+  .tool-row .tool-name { grid-column: 2; grid-row: 1; width: auto; }
+  .tool-row .tool-path { grid-column: 2 / -1; grid-row: 2; }
+  .tool-row button { grid-column: 3; grid-row: 1; }
+  .select { min-width: 0; max-width: 100%; }
 }
 </style>

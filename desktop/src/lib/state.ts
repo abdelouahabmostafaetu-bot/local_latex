@@ -114,7 +114,7 @@ export const state = reactive({
     showRawLog: false,
     layout: "split" as Layout,
     settingsOpen: false,
-    settingsTab: "editor" as "editor" | "compiler" | "appearance" | "shortcuts" | "agent",
+    settingsTab: "editor" as "editor" | "compiler" | "appearance" | "shortcuts" | "agent" | "tools",
     wordCountOpen: false,
     /** Set by File → New Project; the dashboard opens its "new project" prompt. */
     newProjectRequested: false,
@@ -134,6 +134,7 @@ export const editorBridge: {
   goto?: (line: number, column?: number) => void;
   focus?: () => void;
   selectedText?: () => string;
+  replaceDocument?: (text: string) => boolean;
   applyText?: (text: string, mode: "insert" | "replace") => boolean;
   /** Runs an editor command (menu bar). */
   command?: (cmd: EditorCommand) => void;

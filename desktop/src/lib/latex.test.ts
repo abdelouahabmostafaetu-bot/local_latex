@@ -7,6 +7,7 @@ import {
   hintFor,
   joinPath,
   parseOutline,
+  programDirective,
   requiredEngine,
   stripComment,
 } from "./latex";
@@ -116,5 +117,18 @@ describe("hintFor", () => {
 
   it("returns nothing for unrelated errors", () => {
     expect(hintFor("Undefined control sequence.", "pdflatex", "\\usepackage{amsmath}", files)).toBeNull();
+  });
+});
+
+describe("Arabic and TeX program directives", () => {
+  it("reads supported program directives without matching ordinary text", () => {
+    expect(programDirective("% !TEX program = lualatex\nHello")).toBe("lualatex");
+    expect(programDirective("% !TeX program = XeLaTeX")).toBe("xelatex");
+    expect(programDirective("!TEX program = lualatex")).toBeNull();
+  });
+  it("prefers LuaLaTeX for Arabic without treating comments as source", () => {
+    expect(requiredEngine("مرحبا بالعالم")).toBe("lualatex");
+    expect(requiredEngine("% مرحبا\nHello")).toBeNull();
+    expect(requiredEngine("\\usepackage[bidi=basic]{babel}")).toBe("lualatex");
   });
 });

@@ -36,6 +36,8 @@ export interface ProjectInfo {
   mcpCommand: string[];
 }
 
+export interface ToolInfo { name: string; path: string | null }
+
 export interface EngineInfo {
   engine: Engine;
   installed: boolean;
@@ -80,7 +82,7 @@ export interface PdfLocation {
 
 export const ipc = {
   openProject: (path: string) => invoke<ProjectInfo>("open_project", { path }),
-  createProject: (parent: string, name: string) => invoke<ProjectInfo>("create_project", { parent, name }),
+  createProject: (parent: string, name: string, templateKind: "blank" | "arabic" = "blank") => invoke<ProjectInfo>("create_project", { parent, name, templateKind }),
   closeProject: () => invoke<void>("close_project"),
   renameOpenProject: (newName: string) => invoke<ProjectInfo>("rename_open_project", { newName }),
   saveProjectSettings: (settings: ProjectSettings) => invoke<void>("save_project_settings", { settings }),
@@ -102,6 +104,8 @@ export const ipc = {
   trashProjectFolder: (root: string) => invoke<void>("trash_project_folder", { root }),
 
   listEngines: () => invoke<EngineInfo[]>("list_available_engines"),
+  listTools: () => invoke<ToolInfo[]>("list_optional_tools"),
+  formatBuffer: (content: string) => invoke<string>("format_tex_buffer", { content }),
   compile: (entryPoint: string, engine: Engine, options: CompileOptions) =>
     invoke<CompileResult>("compile_tex", { entryPoint, engine, options }),
   clearBuildDir: () => invoke<void>("clear_build_dir"),

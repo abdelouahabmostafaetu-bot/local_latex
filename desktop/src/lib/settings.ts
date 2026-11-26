@@ -23,6 +23,8 @@ export interface Settings {
   highlightActiveLine: boolean;
   /** System spell checker in the editor (it also flags LaTeX commands, hence off by default). */
   spellCheck: boolean;
+  /** Opt-in; missing or failing tex-fmt never prevents a save. */
+  formatOnSave: boolean;
 }
 
 const SETTINGS_VERSION = 2;
@@ -40,6 +42,7 @@ const DEFAULTS: Settings = {
   autoCloseBrackets: true,
   highlightActiveLine: true,
   spellCheck: false,
+  formatOnSave: false,
 };
 
 export const FONT_FAMILIES: Record<FontFamily, { label: string; css: string }> = {

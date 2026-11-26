@@ -72,6 +72,9 @@ impl TeXEngine {
     /// otherwise the first installed engine in [`TeXEngine::PREFERENCE`] order.
     pub fn default_for(source: &str) -> Option<TeXEngine> {
         let installed = |e: &TeXEngine| e.locate().is_some();
+        if let Some(requested) = program_directive(source) {
+            return installed(&requested).then_some(requested);
+        }
         if let Some(needed) = required_engine(source) {
             if installed(&needed) {
                 return Some(needed);
@@ -427,13 +430,22 @@ fn mirror_dirs(src: &Path, dst: &Path, skip: &Path, depth: usize) {
     }
 }
 
+/// Explicit editor directive in a comment, e.g. `% !TEX program = lualatex`.
+pub fn program_directive(source: &str) -> Option<TeXEngine> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"(?i)^\s*%\s*!tex\s+program\s*=\s*([a-z]+)\s*$").unwrap());
+    source.lines().take(40).find_map(|line| re.captures(line).and_then(|m| m[1].parse().ok()))
+}
+
 /// The engine a preamble requires, if any (mirrors the desktop app's detection).
 pub fn required_engine(source: &str) -> Option<TeXEngine> {
-    static RES: OnceLock<[Regex; 2]> = OnceLock::new();
-    let [lua, unicode] = RES.get_or_init(|| {
+    static RES: OnceLock<[Regex; 4]> = OnceLock::new();
+    let [lua, unicode, babel, rtl] = RES.get_or_init(|| {
         [
             Regex::new(r"onchar\s*=|\\directlua|\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(?:luacode|luatexja|lua-ul|luamplib)\b").unwrap(),
             Regex::new(r"\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(?:fontspec|unicode-math|polyglossia|xeCJK|mathspec)\b|\\babelfont|\\setmainfont").unwrap(),
+            Regex::new(r"(?i)\\(?:usepackage|babelprovide)(?:\[[^\]]*(?:arabic|bidi\s*=)[^\]]*\])?\{[^}]*(?:arabic|babel)[^}]*\}").unwrap(),
+            Regex::new(r"(?i)arabic|bidi\s*=\s*basic").unwrap(),
         ]
     });
     // Ignore commented-out lines.
@@ -442,7 +454,9 @@ pub fn required_engine(source: &str) -> Option<TeXEngine> {
         .map(|l| l.split_once('%').map_or(l, |(code, _)| code))
         .collect::<Vec<_>>()
         .join("\n");
-    if lua.is_match(&code) {
+    let has_arabic = code.chars().any(|ch| matches!(ch as u32, 0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF));
+    let babel_rtl = babel.is_match(&code) && rtl.is_match(&code);
+    if lua.is_match(&code) || has_arabic || babel_rtl {
         Some(TeXEngine::LuaLaTeX)
     } else if unicode.is_match(&code) {
         Some(TeXEngine::XeLaTeX)
@@ -712,6 +726,10 @@ Overfull \\hbox (12.0pt too wide) in paragraph at lines 30--32
         assert_eq!(required_engine("\\usepackage[T1]{fontenc,unicode-math}"), Some(TeXEngine::XeLaTeX));
         assert_eq!(required_engine("\\babelprovide[import, onchar=ids fonts]{italian}"), Some(TeXEngine::LuaLaTeX));
         assert_eq!(required_engine("% \\usepackage{fontspec}\n\\begin{document}"), None);
+        assert_eq!(required_engine("مرحبا بالعالم"), Some(TeXEngine::LuaLaTeX));
+        assert_eq!(required_engine("% مرحبا\nHello"), None);
+        assert_eq!(program_directive("% !TEX program = lualatex\nHello"), Some(TeXEngine::LuaLaTeX));
+        assert_eq!(program_directive("% !TeX program = xelatex"), Some(TeXEngine::XeLaTeX));
     }
 
     #[tokio::test]
