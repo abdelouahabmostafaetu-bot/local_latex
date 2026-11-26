@@ -1,0 +1,17 @@
+% !TEX program = lualatex
+% Requires LuaLaTeX, babel, and the Noto Naskh Arabic font.
+\documentclass[12pt]{article}
+\usepackage[bidi=basic]{babel}
+\babelprovide[import,main]{arabic}
+\babelprovide[import]{english}
+\babelfont{rm}[Renderer=HarfBuzz]{Noto Naskh Arabic}
+
+\title{مستند عربي}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+\section{مقدمة}
+هذا مثال لكتابة مستند عربي باستخدام \LaTeX.
+\end{document}

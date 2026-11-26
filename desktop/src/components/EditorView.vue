@@ -14,6 +14,8 @@ import ResizeHandle from "./ResizeHandle.vue";
 import Sidebar from "./Sidebar.vue";
 import ReferenceAtlas from "./ReferenceAtlas.vue";
 import CopilotSidebar from "./CopilotSidebar.vue";
+import ProjectSearch from "./ProjectSearch.vue";
+import GitSidebar from "./GitSidebar.vue";
 
 // Panel sizes, remembered across sessions.
 function stored(key: string, fallback: number) {
@@ -24,6 +26,9 @@ const sidebarWidth = ref(stored("sidebarWidth", 240));
 const pdfRatio = ref(stored("pdfRatio", 0.5));
 const atlasOpen = ref(false);
 const copilotOpen = ref(false);
+const gitOpen = ref(false);
+const searchOpen = ref(false);
+watch(() => state.ui.aiDiagnostic, (item) => { if (item) { atlasOpen.value = false; gitOpen.value = false; copilotOpen.value = true; } });
 const atlasIndex = shallowRef(indexProjectSymbols({}));
 let atlasTimer: ReturnType<typeof setTimeout> | undefined;
 // Debounce project-wide analysis and always prefer the live editor over the disk index.
@@ -67,9 +72,13 @@ const canSync = computed(() => state.synctexAvailable && !!state.pdfData);
 // Global shortcuts (also when the focus is in the PDF or the file tree).
 function onKey(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && e.altKey && e.key.toLowerCase() === "r") {
+  if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    searchOpen.value = true;
+  } else if (mod && e.altKey && e.key.toLowerCase() === "r") {
     e.preventDefault();
     atlasOpen.value = !atlasOpen.value;
+    if (atlasOpen.value) { gitOpen.value = false; copilotOpen.value = false; }
   } else if (mod && e.key === "Enter") {
     e.preventDefault();
     void compile();
@@ -104,8 +113,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex h-full flex-col">
-    <HeaderBar :atlas-open="atlasOpen" :copilot-open="copilotOpen" @toggle-atlas="atlasOpen = !atlasOpen; if (atlasOpen) copilotOpen = false" @toggle-copilot="copilotOpen = !copilotOpen; if (copilotOpen) atlasOpen = false" />
+    <HeaderBar :atlas-open="atlasOpen" :copilot-open="copilotOpen" :git-open="gitOpen" @toggle-atlas="atlasOpen = !atlasOpen; if (atlasOpen) { copilotOpen = false; gitOpen = false; }" @toggle-copilot="copilotOpen = !copilotOpen; if (copilotOpen) { atlasOpen = false; gitOpen = false; }" @toggle-git="gitOpen = !gitOpen; if (gitOpen) { atlasOpen = false; copilotOpen = false; }" @search="searchOpen = true" />
 
+    <ProjectSearch v-if="searchOpen" @close="searchOpen = false" />
     <div class="relative flex min-h-0 flex-1">
       <!-- B. Sidebar -->
       <template v-if="!state.ui.sidebarCollapsed">
@@ -161,6 +171,7 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
+      <GitSidebar v-if="gitOpen" @close="gitOpen = false" />
       <CopilotSidebar v-show="copilotOpen" @close="copilotOpen = false" />
       <ReferenceAtlas v-if="atlasOpen" :index="atlasIndex" @close="atlasOpen = false" />
 

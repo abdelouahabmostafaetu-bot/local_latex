@@ -10,16 +10,25 @@ import { flushSave } from "./files";
 
 /** `queued` marks the internal re-run of a request that arrived mid-compile (never deduplicated). */
 let autoCompileTimer: ReturnType<typeof setTimeout> | undefined;
-const AUTO_COMPILE_DELAY = 2000;
+const AUTO_COMPILE_DELAY = 700;
+let revision = 0;
+let sequence = 0;
+let activeRequest: string | null = null;
 
-/** Recompiles a couple of seconds after the last edit (Auto compile). */
+/** A new edit invalidates the previous result immediately, not only after the debounce. */
 export function scheduleAutoCompile() {
+  revision++;
+  state.compileQueued = false;
+  if (activeRequest) void ipc.cancelCompile(activeRequest).catch(() => {});
   clearTimeout(autoCompileTimer);
-  autoCompileTimer = setTimeout(() => void compile(), AUTO_COMPILE_DELAY);
+  autoCompileTimer = setTimeout(() => void compile(true), AUTO_COMPILE_DELAY);
 }
 
 export function cancelAutoCompile() {
   clearTimeout(autoCompileTimer);
+  revision++;
+  state.compileQueued = false;
+  if (activeRequest) void ipc.cancelCompile(activeRequest).catch(() => {});
 }
 
 export async function compile(queued = false) {
@@ -33,36 +42,40 @@ export async function compile(queued = false) {
     state.compileQueued = true;
     return;
   }
-  await flushSave();
   const gen = session.generation;
+  const requestRevision = revision;
   state.compiling = true;
   state.compileError = null;
   try {
-    const result = await ipc.compile(state.mainDocument, state.engine, {
-      draft: state.draft,
-      stop_on_first_error: state.stopOnFirstError,
-    });
-    // Results of a project that is no longer open are dropped.
-    if (gen === session.generation) {
-      state.result = result;
-      if (result.pdf_path) {
-        state.pdfPath = result.pdf_path;
-        await reloadPdf();
+    await flushSave();
+    if (gen === session.generation && requestRevision === revision && state.mainDocument) {
+      const requestId = `${Date.now()}-${++sequence}`;
+      activeRequest = requestId;
+      const result = await ipc.compile(state.mainDocument, state.engine, {
+        draft: state.draft,
+        stop_on_first_error: state.stopOnFirstError,
+      }, requestId);
+      if (gen === session.generation && requestRevision === revision) {
+        state.result = result;
+        state.engine = result.engine;
+        if (result.success && result.pdf_path) {
+          state.pdfPath = result.pdf_path;
+          await reloadPdf(requestRevision);
+        }
+        if (!result.pdf_path) state.ui.showLogs = true;
       }
-      // With no new PDF there is nothing else to look at: open the logs, as Overleaf does.
-      if (!result.pdf_path) state.ui.showLogs = true;
     }
   } catch (e) {
-    if (gen === session.generation) {
+    if (gen === session.generation && requestRevision === revision) {
       state.result = null;
       state.compileError = errorMessage(e);
       state.ui.showLogs = true;
     }
   } finally {
+    activeRequest = null;
     state.compiling = false;
     state.lastCompileAt = Date.now();
   }
-  // A request that arrived meanwhile (possibly for a newly opened project) runs now.
   if (state.compileQueued) {
     state.compileQueued = false;
     void compile(true);
@@ -74,12 +87,12 @@ export async function recompileFromScratch() {
   await compile(true);
 }
 
-export async function reloadPdf() {
+export async function reloadPdf(expectedRevision?: number) {
   const path = state.pdfPath ?? (state.mainDocument ? `.texcraft/build/${basename(state.mainDocument).replace(/\.tex$/, "")}.pdf` : null);
   if (!path) return;
   const gen = session.generation;
   const data = await ipc.readBinary(path).catch(() => null);
-  if (data && gen === session.generation) {
+  if (data && gen === session.generation && (expectedRevision === undefined || expectedRevision === revision)) {
     state.pdfPath = path;
     state.pdfData = data;
     state.pdfVersion++;

@@ -309,9 +309,19 @@ export const COMMANDS: { name: string; snippet?: string; info?: string }[] = [
 // Engine detection & log hints
 // ---------------------------------------------------------------------------
 
+/** Explicit TeX editor directive, kept separate from inferred requirements. */
+export function programDirective(text: string): "pdflatex" | "xelatex" | "lualatex" | "tectonic" | null {
+  for (const line of text.split("\n").slice(0, 40)) {
+    const name = /^\s*%\s*!tex\s+program\s*=\s*([a-z]+)\s*$/i.exec(line)?.[1]?.toLowerCase();
+    if (name === "pdflatex" || name === "xelatex" || name === "lualatex" || name === "tectonic") return name;
+  }
+  return null;
+}
+
 /** Engine a document needs, judging from its preamble, or null if any engine will do. */
 export function requiredEngine(text: string): "lualatex" | "xelatex" | null {
   const src = text.split("\n").map(stripComment).join("\n");
+  if (/[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/u.test(src) || /\\(?:usepackage|babelprovide)(?:\[[^\]]*(?:arabic|bidi\s*=)[^\]]*\])?\{[^}]*(?:arabic|babel)[^}]*\}/i.test(src) && /arabic|bidi\s*=\s*basic/i.test(src)) return "lualatex";
   if (/onchar\s*=|\\directlua|\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(?:luacode|luatexja|lua-ul|luamplib)\b/.test(src)) {
     return "lualatex";
   }

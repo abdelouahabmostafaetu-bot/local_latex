@@ -14,7 +14,8 @@ import {
   lineNumbers,
   rectangularSelection,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from "@codemirror/commands";
+import { diff } from "@codemirror/merge";
 import { bracketMatching, indentOnInput, indentUnit } from "@codemirror/language";
 import {
   autocompletion,
@@ -37,6 +38,7 @@ import {
   tabAcceptsCompletion,
   wrapSelection,
 } from "../lib/editor";
+import { localMathHover, quickFractionInput } from "../lib/math-authoring";
 import { FONT_FAMILIES, LINE_HEIGHTS, effectiveEditorTheme, isDarkUi, settings } from "../lib/settings";
 import { compile, editorBridge, recentlyRan, save, state, updateContent, type EditorCommand } from "../lib/store";
 import type { SymbolOccurrence } from "../lib/observatory";
@@ -52,6 +54,7 @@ const completeConf = new Compartment();
 const bracketsConf = new Compartment();
 const activeLineConf = new Compartment();
 const spellConf = new Compartment();
+const mathConf = new Compartment();
 
 function themeExt(): Extension {
   return editorTheme(
@@ -69,6 +72,11 @@ const completeExt = (): Extension =>
 const bracketsExt = (): Extension => (settings.autoCloseBrackets ? latexAutoClose() : []);
 const spellExt = (): Extension =>
   EditorView.contentAttributes.of({ spellcheck: settings.spellCheck ? "true" : "false", autocorrect: "off", autocapitalize: "off" });
+const isTex = () => /\.(tex|ltx)$/i.test(state.openPath ?? "");
+const mathExt = (): Extension => [
+  settings.mathHoverPreview ? localMathHover(isTex) : [],
+  settings.quickFractions ? quickFractionInput(isTex) : [],
+];
 const activeLineExt = (): Extension => (settings.highlightActiveLine ? [highlightActiveLine(), highlightActiveLineGutter()] : []);
 
 // Briefly highlights the line we jumped to (SyncTeX, log entries, outline).
@@ -129,6 +137,7 @@ function extensions(): Extension[] {
     flashField,
     atlasField,
     activeLineConf.of(activeLineExt()),
+    mathConf.of(mathExt()),
     bracketsConf.of(bracketsExt()),
     completeConf.of(completeExt()),
     wrapConf.of(wrapExt()),
@@ -213,6 +222,11 @@ onMounted(() => {
   editorBridge.setContent = setContent;
   editorBridge.goto = goto;
   editorBridge.focus = () => view?.focus();
+  editorBridge.replaceDocument = (text) => {
+    if (!view) return false;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, userEvent: "input" });
+    return true;
+  };
   editorBridge.selectedText = () => view ? view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to) : "";
   editorBridge.applyText = (text, mode) => {
     if (!view) return false;
@@ -221,6 +235,19 @@ onMounted(() => {
     const from = mode === "replace" ? selection.from : selection.head;
     const to = mode === "replace" ? selection.to : selection.head;
     view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length }, scrollIntoView: true, userEvent: "input" });
+    view.focus();
+    return true;
+  };
+  editorBridge.prepareAiReview = (text) => {
+    if (!view || state.openKind !== "text" || !state.openPath || !state.info?.root || view.state.selection.ranges.length !== 1) return null;
+    const original = view.state.doc.toString();
+    const { from, to } = view.state.selection.main;
+    return { root: state.info.root, path: state.openPath, original, proposed: original.slice(0, from) + text + original.slice(to) };
+  };
+  editorBridge.applyAiReview = (snapshot, result) => {
+    if (!view || state.openKind !== "text" || state.info?.root !== snapshot.root || state.openPath !== snapshot.path || view.state.doc.toString() !== snapshot.original) return false;
+    const changes = diff(snapshot.original, result).map(c => ({ from: c.fromA, to: c.toA, insert: result.slice(c.fromB, c.toB) }));
+    if (changes.length) view.dispatch({ changes, annotations: isolateHistory.of("full"), userEvent: "input.ai" });
     view.focus();
     return true;
   };
@@ -234,6 +261,8 @@ onBeforeUnmount(() => {
   editorBridge.setContent = editorBridge.goto = editorBridge.focus = undefined;
   editorBridge.command = editorBridge.insert = undefined;
   editorBridge.selectedText = editorBridge.applyText = undefined;
+  editorBridge.replaceDocument = undefined;
+  editorBridge.prepareAiReview = editorBridge.applyAiReview = undefined;
   view?.destroy();
   view = null;
 });
@@ -251,6 +280,7 @@ watch(() => settings.autoComplete, () => reconfigure(completeConf, completeExt))
 watch(() => settings.autoCloseBrackets, () => reconfigure(bracketsConf, bracketsExt));
 watch(() => settings.highlightActiveLine, () => reconfigure(activeLineConf, activeLineExt));
 watch(() => settings.spellCheck, () => reconfigure(spellConf, spellExt));
+watch(() => [settings.mathHoverPreview, settings.quickFractions], () => reconfigure(mathConf, mathExt));
 watch(() => props.atlasIssues, refreshAtlasMarks);
 </script>
 
@@ -264,6 +294,16 @@ watch(() => props.atlasIssues, refreshAtlasMarks);
 }
 :deep(.cm-editor.cm-focused) {
   outline: none;
+}
+:deep(.cm-math-preview) {
+  max-width: min(36rem, 80vw);
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.75rem 1rem;
+  color: #20372c;
+  background: #f7fbf8;
+  border: 1px solid #c9dfcf;
+  border-radius: 0.4rem;
 }
 :deep(.cm-atlas-missing) {
   text-decoration: underline wavy #d97c37;

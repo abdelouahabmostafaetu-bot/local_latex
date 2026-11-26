@@ -5,9 +5,12 @@
 // Defaults to the bundled fixture (e2e/fixture) and writes screenshots to e2e/screenshots.
 // Requires the Vite dev server (`npm run dev`) and a compiled PDF in
 // <project_dir>/.texcraft/build/main.pdf or <project_dir>/build/main.pdf.
-import { webkit } from "playwright";
+import { chromium, webkit } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { testAiReview } from "./ai-review-smoke.mjs";
+import { testMathAuthoring } from "./math-authoring-smoke.mjs";
+import { testProjectSearch } from "./project-search-smoke.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const [projectDir = path.join(here, "fixture"), outDir = path.join(here, "screenshots"), url = "http://localhost:1420"] =
@@ -32,8 +35,11 @@ function tree(dir = root) {
 }
 
 let failCompile = false;
+const sentCopilotPrompts = [];
+const providerRequests = [];
 let exitConfirmed = false;
 let savedSettings = null;
+let gitScenario = 0;
 let renamedTo = null;
 // Answer of the native "Replace files?" dialog, and calls to import_files.
 let askAnswer = false;
@@ -47,6 +53,19 @@ let lastMenuSync = null;
 const errors = [];
 
 const handlers = {
+  git_overview: () => {
+    gitScenario++;
+    if (gitScenario === 1) return { isRepository: true, branch: 'feature/test', detached: false, changes: [{ path: 'main.tex', staged: true, workingTree: true, untracked: false }, { path: 'new.bib', staged: false, workingTree: false, untracked: true }], truncated: false };
+    if (gitScenario === 2) return { isRepository: false, branch: null, detached: false, changes: [], truncated: false };
+    throw new Error('Local filters are not scanned');
+  },
+  copilot_auth_status: () => ({ signedIn: true, login: "test-user", authType: "mock", message: null }),
+  copilot_list_models: () => [],
+  copilot_reset_session: () => null,
+  copilot_send_message: ({ prompt }) => { sentCopilotPrompts.push(prompt); return null; },
+  provider_send: (args) => { providerRequests.push(args); return null; },
+  provider_stop: () => null,
+
   initial_project: () => (process.env.NO_PROJECT ? null : root),
   open_project: () => ({
     root: displayRoot,
@@ -61,6 +80,18 @@ const handlers = {
     return sources.map((s) => (targetDir ? `${targetDir}/` : "") + path.basename(s.path));
   },
   close_project: () => null,
+  cancel_project_search: () => null,
+  project_search: ({ query, isRegex, caseSensitive, overlay }) => {
+    const pattern = isRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(pattern, caseSensitive ? "" : "i");
+    const files = ["main.tex", "chapters/method.tex"];
+    const hits = [];
+    for (const file of files) {
+      const content = overlay?.path === file ? overlay.content : (written.get(file) ?? fs.readFileSync(path.join(root, file), "utf8"));
+      content.split("\n").forEach((line, i) => { const match = re.exec(line); if (match) hits.push({ file, line: i + 1, column: match.index + 1, preview: line }); });
+    }
+    return { hits, filesSearched: files.length, skipped: 0, truncated: false };
+  },
   list_available_engines: () => [
     { engine: "tectonic", installed: true, path: "/opt/homebrew/bin/tectonic" },
     { engine: "pdflatex", installed: true, path: "/Library/TeX/texbin/pdflatex" },
@@ -121,8 +152,9 @@ const handlers = {
   },
 };
 
-const browser = await webkit.launch();
+const browser = (process.env.AI_REVIEW_ONLY || process.env.GIT_ONLY) ? await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || "/usr/local/bin/chromium", args: ["--no-sandbox"] }) : await webkit.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+if (process.env.AI_REVIEW_ONLY) page.on("response", r => { if (r.status() >= 400) console.log("[http-error]", r.status(), r.url()); });
 page.on("pageerror", (e) => {
   errors.push(String(e));
   console.log("[pageerror]", e);
@@ -177,11 +209,72 @@ const shot = async (name) => {
 };
 
 await page.goto(url);
+if (process.env.GIT_ONLY) {
+  await page.waitForSelector('.cm-content', { timeout: 20000 });
+  await page.locator('button[title="Git overview"]').click();
+  const panel = page.getByRole('complementary', { name: 'Git overview' });
+  await panel.getByText('feature/test').waitFor();
+  await panel.getByText('main.tex').waitFor();
+  await panel.getByText('Staged', { exact: true }).waitFor();
+  await panel.getByText('Modified', { exact: true }).waitFor();
+  await panel.getByText('Untracked', { exact: true }).waitFor();
+  await panel.getByRole('button', { name: 'Refresh' }).click();
+  await panel.getByText('No Git repository found').waitFor();
+  await panel.getByRole('button', { name: 'Refresh' }).click();
+  await panel.getByRole('alert').waitFor();
+  await panel.getByRole('button', { name: 'Close Git overview' }).click();
+  if (await panel.count()) throw new Error('Git panel did not close');
+  if (errors.length) throw new Error(`UI errors: ${errors.join(', ')}`);
+  console.log('PASS: mocked Git status, empty state, error and close');
+  await browser.close();
+  process.exit(0);
+}
+if (process.env.AI_REVIEW_ONLY) {
+  await page.waitForSelector('.cm-content', { timeout: 20000 });
+  await testAiReview(page, fs.readFileSync(path.join(root, 'main.tex'), 'utf8'));
+  failCompile = true;
+  await page.click('button[title^="Recompile"]');
+  if (!await page.getByText('Undefined control sequence.').count()) await page.locator('button[title="Logs"]').click();
+  const errorCard = page.locator('article').filter({ hasText: 'Undefined control sequence.' });
+  await errorCard.getByRole('button', { name: /Send to AI/ }).click();
+  await page.waitForFunction(() => document.body.innerText.includes('Help fix this LaTeX error'));
+  if (!sentCopilotPrompts.at(-1)?.includes('Undefined control sequence.') || !sentCopilotPrompts.at(-1)?.includes('Main document preamble')) throw new Error('Diagnostic context was not sent to Copilot');
+  console.log('PASS: diagnostic and preamble sent to mocked Copilot');
+  await page.evaluate(() => window.__emit('copilot:done', null));
+  await page.getByLabel('AI PROVIDER').selectOption('ollama');
+  await page.getByLabel('Model name').fill('fixture-model');
+  await page.getByLabel('Message AI').fill('Explain this equation');
+  await page.getByRole('button', {name:'Send ↑'}).click();
+  await page.evaluate((id) => { window.__emit('provider:chunk',{requestId:id,text:'Hello from local model'}); window.__emit('provider:done',id); }, providerRequests.at(-1).requestId);
+  await page.getByText('Hello from local model').waitFor();
+  if (providerRequests.at(-1)?.model !== 'fixture-model' || providerRequests.at(-1)?.baseUrl !== 'http://127.0.0.1:11434/v1') throw new Error('Wrong provider request');
+  await page.getByLabel('Message AI').fill('Cancel this');
+  await page.getByRole('button', {name:'Send ↑'}).click();
+  const oldId = providerRequests.at(-1).requestId;
+  await page.getByRole('button', {name:'Stop', exact:true}).click();
+  await page.getByLabel('Message AI').fill('New request');
+  await page.getByRole('button', {name:'Send ↑'}).click();
+  const newId = providerRequests.at(-1).requestId;
+  await page.evaluate(({oldId,newId}) => { window.__emit('provider:chunk',{requestId:oldId,text:'STALE-INJECTION'}); window.__emit('provider:done',oldId); window.__emit('provider:chunk',{requestId:newId,text:'Fresh response'}); window.__emit('provider:done',newId); }, {oldId,newId});
+  await page.getByText('Fresh response').waitFor();
+  if (await page.getByText('STALE-INJECTION').count()) throw new Error('Stale provider output was accepted');
+
+  await page.getByLabel('AI PROVIDER').selectOption('custom');
+  await page.getByLabel('API key (optional)').fill('fixture-key');
+  if (await page.evaluate(() => JSON.stringify(localStorage).includes('fixture-key'))) throw new Error('API key was persisted');
+  console.log('PASS: mocked local provider, streaming, switching, non-persisted API key');
+
+  if (errors.length) throw new Error(`UI errors: ${errors.join(', ')}`);
+  await browser.close();
+  process.exit(0);
+}
 await page.waitForSelector(".pdf-page canvas", { timeout: 20000 });
 await shot("1-editor-dark");
 
 // --- Editor behaviour regressions (skipped with DOCS=1 for clean README screenshots) ---
 if (!process.env.DOCS) {
+await testMathAuthoring(page, menu);
+await testProjectSearch(page);
 const activeLine = () => page.locator(".cm-activeLine").innerText();
 const newLine = async (text) => {
   await page.click(".cm-content");

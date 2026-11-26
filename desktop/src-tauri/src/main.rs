@@ -7,13 +7,16 @@
 //! can drive the very project that is open in the editor. Edits the agent makes are
 //! picked up by the file watcher and pushed to the UI as events.
 
+mod build_cancel;
+mod git_status;
 mod copilot;
 mod menu;
 mod projects;
+mod provider;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -46,6 +49,8 @@ pub(crate) struct AppState {
     exit_allowed: AtomicBool,
     open: RwLock<Option<OpenProject>>,
     compile_lock: tokio::sync::Mutex<()>,
+    compile_cancel: build_cancel::BuildCancellation,
+    search_generation: Arc<AtomicU64>,
     compiling: Arc<AtomicBool>,
 }
 
@@ -133,10 +138,14 @@ async fn create_project(
     state: State<'_, AppState>,
     parent: String,
     name: String,
+    template_kind: Option<String>,
 ) -> CmdResult<ProjectInfo> {
     let name = name.trim().to_string();
     if name.is_empty() || name.contains(['/', '\\', ':']) || name.starts_with('.') {
         return Err("invalid project name".into());
+    }
+    if !matches!(template_kind.as_deref(), None | Some("blank") | Some("arabic")) {
+        return Err("unknown project template".into());
     }
     let dir = Path::new(&parent).join(&name);
     if dir.exists() {
@@ -144,11 +153,16 @@ async fn create_project(
     }
     tokio::fs::create_dir_all(&dir).await.map_err(err)?;
     let title = name.replace(['\\', '{', '}', '%', '#', '&', '$', '_', '^', '~'], " ");
-    let template = format!(
+    let blank_template = format!(
         "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\n\
          \\title{{{title}}}\n\\author{{}}\n\\date{{\\today}}\n\n\\begin{{document}}\n\n\\maketitle\n\n\
          \\section{{Introduction}}\n\nYour text here.\n\n\\end{{document}}\n"
     );
+    let template = match template_kind.as_deref() {
+        None | Some("blank") => blank_template,
+        Some("arabic") => include_str!("../../../templates/arabic-main.tex").to_string(),
+        Some(_) => return Err("unknown project template".into()),
+    };
     tokio::fs::write(dir.join("main.tex"), template).await.map_err(err)?;
     open_project_at(app, &state, dir).await
 }
@@ -307,6 +321,38 @@ async fn export_file(state: State<'_, AppState>, path: String, destination: Stri
 // Compilation
 // ---------------------------------------------------------------------------
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolInfo { name: String, path: Option<String> }
+
+#[tauri::command]
+fn list_optional_tools() -> Vec<ToolInfo> {
+    ["pdflatex", "xelatex", "lualatex", "latexmk", "tectonic", "synctex", "tex-fmt", "texlab", "texquill", "rtex", "pandoc"]
+        .into_iter().map(|name| ToolInfo { name: name.into(), path: compiler::find_in_path(name).map(|p| p.to_string_lossy().into_owned()) }).collect()
+}
+
+/// Format an in-memory buffer. The caller applies it only if that buffer has not changed.
+#[tauri::command]
+async fn format_tex_buffer(content: String) -> CmdResult<String> {
+    use tokio::io::AsyncWriteExt;
+    use std::process::Stdio;
+    if content.len() > texcraft_core::project::MAX_TEXT_FILE_BYTES as usize { return Err("File is too large to format.".into()); }
+    let binary = compiler::find_in_path("tex-fmt").ok_or_else(|| "tex-fmt was not found in PATH. See Toolchain & Diagnostics for installation guidance.".to_string())?;
+    let mut child = tokio::process::Command::new(binary).arg("--stdin")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true)
+        .spawn().map_err(err)?;
+    let mut stdin = child.stdin.take().ok_or("Could not open formatter input.")?;
+    let job = async move {
+        let write = async move { stdin.write_all(content.as_bytes()).await };
+        let (written, output) = tokio::join!(write, child.wait_with_output());
+        written.map_err(err)?;
+        let output = output.map_err(err)?;
+        if !output.status.success() { return Err(format!("tex-fmt failed: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+        String::from_utf8(output.stdout).map_err(err)
+    };
+    tokio::time::timeout(Duration::from_secs(15), job).await.map_err(|_| "tex-fmt timed out".to_string())?
+}
+
 #[tauri::command]
 fn list_available_engines() -> Vec<EngineInfo> {
     TeXEngine::ALL
@@ -323,26 +369,71 @@ fn list_available_engines() -> Vec<EngineInfo> {
 }
 
 #[tauri::command]
+fn cancel_project_search(state: State<'_, AppState>) {
+    state.search_generation.fetch_add(1, Ordering::SeqCst);
+}
+
+#[tauri::command]
+async fn project_search(
+    state: State<'_, AppState>, query: String, is_regex: bool, case_sensitive: bool,
+    overlay: Option<texcraft_core::search::SearchOverlay>,
+) -> CmdResult<texcraft_core::search::SearchReport> {
+    let project = state.project()?;
+    let generation = state.search_generation.clone();
+    let ticket = generation.fetch_add(1, Ordering::SeqCst) + 1;
+    tokio::task::spawn_blocking(move || {
+        texcraft_core::search::search_project(&project, &query, is_regex, case_sensitive, overlay,
+            || generation.load(Ordering::SeqCst) != ticket).map_err(anyhow_err)
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
+fn cancel_compile(state: State<'_, AppState>, request_id: String) {
+    state.compile_cancel.cancel(&request_id);
+}
+
+#[tauri::command]
 async fn compile_tex(
     app: AppHandle,
     state: State<'_, AppState>,
     entry_point: String,
     engine: TeXEngine,
     options: Option<CompileOptions>,
+    request_id: Option<String>,
 ) -> CmdResult<Value> {
     let project = state.project()?;
-    let entry = project.resolve(&entry_point).map_err(anyhow_err)?;
+    let source = project.read_text(&entry_point).await.map_err(anyhow_err)?;
+    let entry = project.resolve_tex_root(&entry_point).await.map_err(anyhow_err)?;
+    let root_source = project.read_text(&project.relative(&entry)).await.map_err(anyhow_err)?;
+    let directive = compiler::program_directive(&root_source).or_else(|| compiler::program_directive(&source));
+    let engine = directive.unwrap_or(engine);
+    if directive.is_some() && engine.locate().is_none() {
+        return Err(format!("This document requests {engine}, but it is not installed."));
+    }
     let output_dir = project.resolve(DEFAULT_OUTPUT_DIR).map_err(anyhow_err)?;
     let mut opts = options.unwrap_or_default();
     opts.synctex = true;
 
-    let _guard = state.compile_lock.lock().await;
+    // Register before waiting for the lock: even a queued build can be cancelled.
+    static NEXT_LEGACY_ID: AtomicU64 = AtomicU64::new(0);
+    let id = request_id.unwrap_or_else(|| format!("legacy-{}", NEXT_LEGACY_ID.fetch_add(1, Ordering::Relaxed)));
+    let mut cancel = state.compile_cancel.register(&id);
+    let _registration = build_cancel::Registration { registry: &state.compile_cancel, id: &id };
+    if *cancel.borrow() { return Err("Build cancelled".into()); }
+    let _guard = tokio::select! {
+        guard = state.compile_lock.lock() => guard,
+        _ = cancel.changed() => return Err("Build cancelled".into()),
+    };
+    if *cancel.borrow() { return Err("Build cancelled".into()); }
     state.compiling.store(true, Ordering::SeqCst);
     let _ = app.emit("compile://started", json!({ "entryPoint": entry_point, "engine": engine }));
-
-    let outcome = compiler::compile_with(engine, &entry, &output_dir, &opts).await;
+    // Dropping the compiler future kills its direct child (kill_on_drop in run_tool).
+    let outcome = tokio::select! {
+        result = compiler::compile_with(engine, &entry, &output_dir, &opts) => Some(result),
+        _ = cancel.changed() => None,
+    };
     state.compiling.store(false, Ordering::SeqCst);
-
+    let Some(outcome) = outcome else { return Err("Build cancelled".into()); };
     let payload = match outcome {
         Ok(result) => project.relativize_compilation(&entry, &result),
         Err(e) => {
@@ -368,8 +459,9 @@ async fn clear_build_dir(state: State<'_, AppState>) -> CmdResult<()> {
 // SyncTeX
 // ---------------------------------------------------------------------------
 
-fn output_pdf(project: &Project, main_document: &str) -> CmdResult<PathBuf> {
-    let stem = Path::new(main_document)
+async fn output_pdf(project: &Project, main_document: &str) -> CmdResult<PathBuf> {
+    let root = project.resolve_tex_root(main_document).await.map_err(anyhow_err)?;
+    let stem = root
         .file_stem()
         .ok_or("invalid main document")?
         .to_string_lossy()
@@ -392,7 +484,7 @@ async fn synctex_forward(
     column: u32,
 ) -> CmdResult<Vec<synctex::PdfLocation>> {
     let project = state.project()?;
-    let pdf = output_pdf(&project, &main_document)?;
+    let pdf = output_pdf(&project, &main_document).await?;
     let source = project.resolve(&file).map_err(anyhow_err)?;
     synctex::forward(&pdf, &source, line, column).await.map_err(anyhow_err)
 }
@@ -406,7 +498,7 @@ async fn synctex_inverse(
     y: f64,
 ) -> CmdResult<Option<SyncTexSource>> {
     let project = state.project()?;
-    let pdf = output_pdf(&project, &main_document)?;
+    let pdf = output_pdf(&project, &main_document).await?;
     let Some(loc) = synctex::inverse(&pdf, page, x, y).await.map_err(anyhow_err)? else {
         return Ok(None);
     };
@@ -577,12 +669,14 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .manage(copilot::CopilotState::default())
+        .manage(provider::ProviderState::default())
         .manage(menu::MenuState::default())
         .setup(|app| {
             menu::install(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            git_status::git_overview,
             copilot::copilot_auth_status,
             copilot::copilot_github_login,
             copilot::copilot_use_cli_credentials,
@@ -592,6 +686,10 @@ fn main() {
             copilot::copilot_send_message,
             copilot::copilot_reset_session,
             copilot::copilot_stop,
+            provider::provider_send,
+            provider::provider_stop,
+            list_optional_tools,
+            format_tex_buffer,
             open_project,
             create_project,
             close_project,
@@ -608,7 +706,10 @@ fn main() {
             import_files,
             export_file,
             list_available_engines,
+            project_search,
+            cancel_project_search,
             compile_tex,
+            cancel_compile,
             clear_build_dir,
             synctex_forward,
             synctex_inverse,

@@ -5,6 +5,7 @@ import { ipc, errorMessage } from "./ipc";
 import { basename, dirname, extractBibKeys, extractLabels } from "./latex";
 import { allFiles, editorBridge, fileKind, findNode, guarded, notify, session, state } from "./state";
 import { scheduleAutoCompile } from "./compile";
+import { settings } from "./settings";
 
 // ---------------------------------------------------------------------------
 // File tree
@@ -194,8 +195,18 @@ async function saveNow() {
   if (!path || state.openKind !== "text" || state.content === state.savedContent) return;
   // A disk conflict is pending: never overwrite the other version behind the user's back.
   if (state.conflict?.path === path) return;
-  const content = state.content;
+  let content = state.content;
   state.saveState = "saving";
+  if (settings.formatOnSave && /\.(tex|bib)$/i.test(path)) {
+    try {
+      const formatted = await ipc.formatBuffer(content);
+      if (state.openPath === path && state.content === content && !state.conflict && formatted !== content) {
+        if (editorBridge.replaceDocument?.(formatted)) content = formatted;
+      }
+    } catch (e) {
+      notify(`Formatting unavailable; saving without it: ${errorMessage(e)}`, "error");
+    }
+  }
   rememberOwnWrite(path, content);
   try {
     await ipc.writeFile(path, content);

@@ -7,8 +7,8 @@ import Logo from "./Logo.vue";
 import RecompileButton from "./RecompileButton.vue";
 import ToolbarButton from "./ToolbarButton.vue";
 
-defineProps<{ atlasOpen: boolean; copilotOpen: boolean }>();
-const emit = defineEmits<{ toggleAtlas: []; toggleCopilot: [] }>();
+defineProps<{ atlasOpen: boolean; copilotOpen: boolean; gitOpen: boolean }>();
+const emit = defineEmits<{ toggleAtlas: []; toggleCopilot: []; toggleGit: []; search: [] }>();
 
 const editing = ref(false);
 const draft = ref("");
@@ -115,8 +115,13 @@ function toggleLogs() {
       :badge-kind="counts.errors ? 'error' : 'warning'"
       @click="toggleLogs"
     />
+    <ToolbarButton icon="search" label="Search" title="Search project (Ctrl/⌘ + Shift + F)" @click="emit('search')" />
     <ToolbarButton icon="toc" label="Outline" :active="state.ui.showOutline" @click="state.ui.showOutline = !state.ui.showOutline" />
 
+    <button class="atlas-launcher ml-2 flex h-9 items-center gap-2 rounded-md px-3 text-[12px] font-semibold"
+      :class="{ 'is-active': gitOpen }" :aria-pressed="gitOpen" title="Git overview" @click="emit('toggleGit')">
+      <Icon name="account_tree" :size="17" /><span>Git</span>
+    </button>
     <button class="atlas-launcher ml-2 flex h-9 items-center gap-2 rounded-md px-3 text-[12px] font-semibold"
       :class="{ 'is-active': copilotOpen }" :aria-pressed="copilotOpen" title="Open Copilot chat" @click="emit('toggleCopilot')">
       <Icon name="forum" :size="17" /><span>Copilot</span>

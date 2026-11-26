@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { state } from "../lib/store";
+import { computed, ref } from "vue";
+import { editorBridge, notify, state } from "../lib/store";
+import { errorMessage, ipc } from "../lib/ipc";
 import { iconForFile } from "./fileIcons";
 import BinaryPreview from "./BinaryPreview.vue";
 import CodeEditor from "./CodeEditor.vue";
@@ -9,6 +10,19 @@ import type { SymbolOccurrence } from "../lib/observatory";
 defineProps<{ atlasIssues: SymbolOccurrence[] }>();
 
 const crumbs = computed(() => state.openPath?.split("/") ?? []);
+const formatting = ref(false);
+async function formatDocument() {
+  const path = state.openPath, original = state.content;
+  if (!path || state.openKind !== "text" || !/\.(tex|bib)$/i.test(path) || formatting.value) return;
+  formatting.value = true;
+  try {
+    const formatted = await ipc.formatBuffer(original);
+    if (state.openPath !== path || state.content !== original) { notify("Formatting cancelled because the file changed.", "error"); return; }
+    if (!editorBridge.replaceDocument?.(formatted)) { notify("No active editor.", "error"); return; }
+    notify("Formatted. Undo is available.", "success");
+  } catch (e) { notify(errorMessage(e), "error"); }
+  finally { formatting.value = false; }
+}
 const fileIcon = computed(() => (state.openPath ? iconForFile(state.openPath) : null));
 </script>
 
@@ -29,6 +43,8 @@ const fileIcon = computed(() => (state.openPath ? iconForFile(state.openPath) : 
         >
       </template>
       <span v-else class="opacity-60">No file open</span>
+      <div class="flex-1" />
+      <button v-if="state.openKind === 'text' && /\.(tex|bib)$/i.test(state.openPath ?? '')" class="rounded px-2 py-1 hover:bg-surface-hover disabled:opacity-50" :disabled="formatting" title="Format with tex-fmt" @click="formatDocument">{{ formatting ? 'Formatting…' : 'Format' }}</button>
     </div>
 
     <div class="relative min-h-0 flex-1">

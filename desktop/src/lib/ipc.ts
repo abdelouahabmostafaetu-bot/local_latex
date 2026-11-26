@@ -36,6 +36,8 @@ export interface ProjectInfo {
   mcpCommand: string[];
 }
 
+export interface ToolInfo { name: string; path: string | null }
+
 export interface EngineInfo {
   engine: Engine;
   installed: boolean;
@@ -70,6 +72,9 @@ export interface CompileOptions {
   stop_on_first_error: boolean;
 }
 
+export interface SearchHit { file: string; line: number; column: number; preview: string }
+export interface SearchReport { hits: SearchHit[]; filesSearched: number; skipped: number; truncated: boolean }
+
 export interface PdfLocation {
   page: number;
   h: number;
@@ -80,7 +85,7 @@ export interface PdfLocation {
 
 export const ipc = {
   openProject: (path: string) => invoke<ProjectInfo>("open_project", { path }),
-  createProject: (parent: string, name: string) => invoke<ProjectInfo>("create_project", { parent, name }),
+  createProject: (parent: string, name: string, templateKind: "blank" | "arabic" = "blank") => invoke<ProjectInfo>("create_project", { parent, name, templateKind }),
   closeProject: () => invoke<void>("close_project"),
   renameOpenProject: (newName: string) => invoke<ProjectInfo>("rename_open_project", { newName }),
   saveProjectSettings: (settings: ProjectSettings) => invoke<void>("save_project_settings", { settings }),
@@ -101,9 +106,15 @@ export const ipc = {
   moveProjectFolder: (root: string, destination: string) => invoke<string>("move_project_folder", { root, destination }),
   trashProjectFolder: (root: string) => invoke<void>("trash_project_folder", { root }),
 
+  searchProject: (query: string, isRegex: boolean, caseSensitive: boolean, overlay: { path: string; content: string } | null) =>
+    invoke<SearchReport>("project_search", { query, isRegex, caseSensitive, overlay }),
+  cancelProjectSearch: () => invoke<void>("cancel_project_search"),
   listEngines: () => invoke<EngineInfo[]>("list_available_engines"),
-  compile: (entryPoint: string, engine: Engine, options: CompileOptions) =>
-    invoke<CompileResult>("compile_tex", { entryPoint, engine, options }),
+  listTools: () => invoke<ToolInfo[]>("list_optional_tools"),
+  formatBuffer: (content: string) => invoke<string>("format_tex_buffer", { content }),
+  compile: (entryPoint: string, engine: Engine, options: CompileOptions, requestId: string) =>
+    invoke<CompileResult>("compile_tex", { entryPoint, engine, options, requestId }),
+  cancelCompile: (requestId: string) => invoke<void>("cancel_compile", { requestId }),
   clearBuildDir: () => invoke<void>("clear_build_dir"),
 
   synctexAvailable: () => invoke<boolean>("synctex_available"),
