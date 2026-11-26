@@ -5,9 +5,10 @@
 // Defaults to the bundled fixture (e2e/fixture) and writes screenshots to e2e/screenshots.
 // Requires the Vite dev server (`npm run dev`) and a compiled PDF in
 // <project_dir>/.texcraft/build/main.pdf or <project_dir>/build/main.pdf.
-import { webkit } from "playwright";
+import { chromium, webkit } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { testAiReview } from "./ai-review-smoke.mjs";
 import { testMathAuthoring } from "./math-authoring-smoke.mjs";
 import { testProjectSearch } from "./project-search-smoke.mjs";
 
@@ -34,6 +35,7 @@ function tree(dir = root) {
 }
 
 let failCompile = false;
+const sentCopilotPrompts = [];
 let exitConfirmed = false;
 let savedSettings = null;
 let renamedTo = null;
@@ -49,6 +51,11 @@ let lastMenuSync = null;
 const errors = [];
 
 const handlers = {
+  copilot_auth_status: () => ({ signedIn: true, login: "test-user", authType: "mock", message: null }),
+  copilot_list_models: () => [],
+  copilot_reset_session: () => null,
+  copilot_send_message: ({ prompt }) => { sentCopilotPrompts.push(prompt); return null; },
+
   initial_project: () => (process.env.NO_PROJECT ? null : root),
   open_project: () => ({
     root: displayRoot,
@@ -135,8 +142,9 @@ const handlers = {
   },
 };
 
-const browser = await webkit.launch();
+const browser = process.env.AI_REVIEW_ONLY ? await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || "/usr/local/bin/chromium", args: ["--no-sandbox"] }) : await webkit.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+if (process.env.AI_REVIEW_ONLY) page.on("response", r => { if (r.status() >= 400) console.log("[http-error]", r.status(), r.url()); });
 page.on("pageerror", (e) => {
   errors.push(String(e));
   console.log("[pageerror]", e);
@@ -191,6 +199,21 @@ const shot = async (name) => {
 };
 
 await page.goto(url);
+if (process.env.AI_REVIEW_ONLY) {
+  await page.waitForSelector('.cm-content', { timeout: 20000 });
+  await testAiReview(page, fs.readFileSync(path.join(root, 'main.tex'), 'utf8'));
+  failCompile = true;
+  await page.click('button[title^="Recompile"]');
+  if (!await page.getByText('Undefined control sequence.').count()) await page.locator('button[title="Logs"]').click();
+  const errorCard = page.locator('article').filter({ hasText: 'Undefined control sequence.' });
+  await errorCard.getByRole('button', { name: /Send to Copilot/ }).click();
+  await page.waitForFunction(() => document.body.innerText.includes('Help fix this LaTeX error'));
+  if (!sentCopilotPrompts.at(-1)?.includes('Undefined control sequence.') || !sentCopilotPrompts.at(-1)?.includes('Main document preamble')) throw new Error('Diagnostic context was not sent to Copilot');
+  console.log('PASS: diagnostic and preamble sent to mocked Copilot');
+  if (errors.length) throw new Error(`UI errors: ${errors.join(', ')}`);
+  await browser.close();
+  process.exit(0);
+}
 await page.waitForSelector(".pdf-page canvas", { timeout: 20000 });
 await shot("1-editor-dark");
 

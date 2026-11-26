@@ -4,6 +4,7 @@ import { reactive } from "vue";
 import {
   errorMessage,
   type CompileResult,
+  type Diagnostic,
   type Engine,
   type EngineInfo,
   type FileNode,
@@ -107,6 +108,7 @@ export const state = reactive({
 
   ui: {
     showLogs: false,
+    aiDiagnostic: null as Diagnostic | null,
     showOutline: true,
     sidebarCollapsed: false,
     /** "New file"/"New folder" prompts, opened from the file tree or the menu bar. */
@@ -127,6 +129,8 @@ export const state = reactive({
 // Editor bridge (implemented by CodeEditor.vue)
 // ---------------------------------------------------------------------------
 
+export interface AiReviewSnapshot { root: string; path: string; original: string; proposed: string }
+
 export type EditorCommand = "find" | "replace" | "gotoLine" | "comment" | "bold" | "italic";
 
 export const editorBridge: {
@@ -136,6 +140,8 @@ export const editorBridge: {
   selectedText?: () => string;
   replaceDocument?: (text: string) => boolean;
   applyText?: (text: string, mode: "insert" | "replace") => boolean;
+  prepareAiReview?: (text: string) => AiReviewSnapshot | null;
+  applyAiReview?: (snapshot: AiReviewSnapshot, result: string) => boolean;
   /** Runs an editor command (menu bar). */
   command?: (cmd: EditorCommand) => void;
   /** Inserts a CodeMirror snippet (`#{}` fields) at the cursor, wrapping the selection into the first field. */

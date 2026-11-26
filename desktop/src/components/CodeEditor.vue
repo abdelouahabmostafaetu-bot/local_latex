@@ -14,7 +14,8 @@ import {
   lineNumbers,
   rectangularSelection,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from "@codemirror/commands";
+import { diff } from "@codemirror/merge";
 import { bracketMatching, indentOnInput, indentUnit } from "@codemirror/language";
 import {
   autocompletion,
@@ -237,6 +238,19 @@ onMounted(() => {
     view.focus();
     return true;
   };
+  editorBridge.prepareAiReview = (text) => {
+    if (!view || state.openKind !== "text" || !state.openPath || !state.info?.root || view.state.selection.ranges.length !== 1) return null;
+    const original = view.state.doc.toString();
+    const { from, to } = view.state.selection.main;
+    return { root: state.info.root, path: state.openPath, original, proposed: original.slice(0, from) + text + original.slice(to) };
+  };
+  editorBridge.applyAiReview = (snapshot, result) => {
+    if (!view || state.openKind !== "text" || state.info?.root !== snapshot.root || state.openPath !== snapshot.path || view.state.doc.toString() !== snapshot.original) return false;
+    const changes = diff(snapshot.original, result).map(c => ({ from: c.fromA, to: c.toA, insert: result.slice(c.fromB, c.toB) }));
+    if (changes.length) view.dispatch({ changes, annotations: isolateHistory.of("full"), userEvent: "input.ai" });
+    view.focus();
+    return true;
+  };
   editorBridge.command = runCommand;
   editorBridge.insert = insertSnippet;
   refreshAtlasMarks();
@@ -248,6 +262,7 @@ onBeforeUnmount(() => {
   editorBridge.command = editorBridge.insert = undefined;
   editorBridge.selectedText = editorBridge.applyText = undefined;
   editorBridge.replaceDocument = undefined;
+  editorBridge.prepareAiReview = editorBridge.applyAiReview = undefined;
   view?.destroy();
   view = null;
 });

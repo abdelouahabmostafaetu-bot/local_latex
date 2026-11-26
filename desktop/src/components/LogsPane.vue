@@ -92,18 +92,16 @@ function location(item: Diagnostic) {
         </div>
 
         <template v-for="g in groups" :key="g.key">
-          <button
+          <article
             v-for="(item, i) in g.items"
             :key="`${g.key}-${i}`"
             class="block w-full overflow-hidden rounded border text-left transition-shadow hover:shadow-md"
             :class="g.cls"
-            :title="item.line ? 'Go to this line' : 'Open file'"
-            @click="gotoLocation(item.file, item.line)"
           >
             <div class="flex items-center gap-2 px-3 py-1.5 text-[13px] font-semibold" :class="g.head">
               <Icon :name="g.icon" :size="17" />
               <span class="flex-1 truncate">{{ g.label }}</span>
-              <span class="shrink-0 text-[12px] font-normal underline-offset-2 opacity-90 hover:underline">{{ location(item) }}</span>
+              <button class="shrink-0 text-[12px] font-normal underline-offset-2 opacity-90 hover:underline" :title="item.line ? 'Go to this line' : 'Open file'" @click="gotoLocation(item.file, item.line)">{{ location(item) || 'Open file' }}</button>
             </div>
             <p class="px-3 py-2 font-mono text-[12px] break-words whitespace-pre-wrap">{{ item.message }}</p>
             <div
@@ -123,7 +121,8 @@ function location(item: Diagnostic) {
                 </button>
               </div>
             </div>
-          </button>
+            <button class="mx-3 mb-3 rounded border border-surface-border px-2.5 py-1 text-[12px] font-semibold hover:bg-surface-hover" title="Send this diagnostic and relevant source context to Copilot" @click="state.ui.aiDiagnostic = { ...item }">Send to Copilot ↗</button>
+          </article>
         </template>
       </template>
 

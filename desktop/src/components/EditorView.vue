@@ -26,6 +26,7 @@ const pdfRatio = ref(stored("pdfRatio", 0.5));
 const atlasOpen = ref(false);
 const copilotOpen = ref(false);
 const searchOpen = ref(false);
+watch(() => state.ui.aiDiagnostic, (item) => { if (item) { atlasOpen.value = false; copilotOpen.value = true; } });
 const atlasIndex = shallowRef(indexProjectSymbols({}));
 let atlasTimer: ReturnType<typeof setTimeout> | undefined;
 // Debounce project-wide analysis and always prefer the live editor over the disk index.
