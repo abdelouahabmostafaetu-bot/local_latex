@@ -8,6 +8,7 @@
 //! picked up by the file watcher and pushed to the UI as events.
 
 mod build_cancel;
+mod git_status;
 mod copilot;
 mod menu;
 mod projects;
@@ -675,6 +676,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            git_status::git_overview,
             copilot::copilot_auth_status,
             copilot::copilot_github_login,
             copilot::copilot_use_cli_credentials,

@@ -39,6 +39,7 @@ const sentCopilotPrompts = [];
 const providerRequests = [];
 let exitConfirmed = false;
 let savedSettings = null;
+let gitScenario = 0;
 let renamedTo = null;
 // Answer of the native "Replace files?" dialog, and calls to import_files.
 let askAnswer = false;
@@ -52,6 +53,12 @@ let lastMenuSync = null;
 const errors = [];
 
 const handlers = {
+  git_overview: () => {
+    gitScenario++;
+    if (gitScenario === 1) return { isRepository: true, branch: 'feature/test', detached: false, changes: [{ path: 'main.tex', staged: true, workingTree: true, untracked: false }, { path: 'new.bib', staged: false, workingTree: false, untracked: true }], truncated: false };
+    if (gitScenario === 2) return { isRepository: false, branch: null, detached: false, changes: [], truncated: false };
+    throw new Error('Local filters are not scanned');
+  },
   copilot_auth_status: () => ({ signedIn: true, login: "test-user", authType: "mock", message: null }),
   copilot_list_models: () => [],
   copilot_reset_session: () => null,
@@ -145,7 +152,7 @@ const handlers = {
   },
 };
 
-const browser = process.env.AI_REVIEW_ONLY ? await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || "/usr/local/bin/chromium", args: ["--no-sandbox"] }) : await webkit.launch();
+const browser = (process.env.AI_REVIEW_ONLY || process.env.GIT_ONLY) ? await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || "/usr/local/bin/chromium", args: ["--no-sandbox"] }) : await webkit.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 if (process.env.AI_REVIEW_ONLY) page.on("response", r => { if (r.status() >= 400) console.log("[http-error]", r.status(), r.url()); });
 page.on("pageerror", (e) => {
@@ -202,6 +209,26 @@ const shot = async (name) => {
 };
 
 await page.goto(url);
+if (process.env.GIT_ONLY) {
+  await page.waitForSelector('.cm-content', { timeout: 20000 });
+  await page.locator('button[title="Git overview"]').click();
+  const panel = page.getByRole('complementary', { name: 'Git overview' });
+  await panel.getByText('feature/test').waitFor();
+  await panel.getByText('main.tex').waitFor();
+  await panel.getByText('Staged', { exact: true }).waitFor();
+  await panel.getByText('Modified', { exact: true }).waitFor();
+  await panel.getByText('Untracked', { exact: true }).waitFor();
+  await panel.getByRole('button', { name: 'Refresh' }).click();
+  await panel.getByText('No Git repository found').waitFor();
+  await panel.getByRole('button', { name: 'Refresh' }).click();
+  await panel.getByRole('alert').waitFor();
+  await panel.getByRole('button', { name: 'Close Git overview' }).click();
+  if (await panel.count()) throw new Error('Git panel did not close');
+  if (errors.length) throw new Error(`UI errors: ${errors.join(', ')}`);
+  console.log('PASS: mocked Git status, empty state, error and close');
+  await browser.close();
+  process.exit(0);
+}
 if (process.env.AI_REVIEW_ONLY) {
   await page.waitForSelector('.cm-content', { timeout: 20000 });
   await testAiReview(page, fs.readFileSync(path.join(root, 'main.tex'), 'utf8'));
